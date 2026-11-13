@@ -451,6 +451,11 @@ refresh:
    `TRUST_ANCHORS_LOADED`.
 4. A marked `PHASE 2 HOOK` comment: listeners are bound here, last, in Phase 2.
 
+Changed in Phase 2: the hook is filled. Two steps follow `TRUST_ANCHORS_LOADED`: `DENY_LIST_SEEDED` (load revoked,
+expired, and renewed certificates into memory and start the 30-second refresh) and `LISTENERS_BOUND` (bind 8443, 8444,
+8445). `LISTENERS_BOUND` is always last. Re-running the sequence after a rebuild re-binds the listeners with the new
+gateway leaf.
+
 Order matters: the gateway leaf must be issued by the Server TLS CA that reconciliation just confirmed or built, and
 trust anchors must reflect the post-reconcile hierarchy. The boot thread is allowed to block, so the synchronous KMS
 calls are fine here. `vitalsshield.boot.enabled=false` turns the runner off for schema-only tests.
@@ -554,6 +559,8 @@ Does NOT defend against:
 - **Root online in local mode.** The spec's offline ceremony for the Root key does not exist locally.
 - **Revocation checking.** CRLs are generated but not served, and nothing consumes them yet. Real-time enforcement
   comes with the Phase 2 trust manager.
+  Changed in Phase 2: both CRLs are served on port 8444 at their CDP URLs, and revocation is enforced by the
+  handshake deny-list, the post-handshake gate, the per-request DB check, and socket eviction.
 - **Database tampering.** Someone with write access to `ca_issuers` could change which certificate the app treats as
   current. They still could not sign without the KMS key, and the post-sign verification would fail.
 
@@ -888,3 +895,7 @@ A: The CRL is the published, signed record for outside relying parties, as spec 
 AKI, a 24-hour nextUpdate, and RFC 5280 reason codes. Our own enforcement will be faster: the Phase 2 TLS trust
 manager and per-request filter check certificate status in the database on every connection and request. In Phase 1
 the CRL is generated and verified by OpenSSL but not yet served over HTTP.
+
+Changed in Phase 2: the CRLs are now served on 8444. The prediction above was not quite what got built: the trust
+manager checks an in-memory deny-list, not the database, because it runs on the Netty event loop. The per-request
+filter (`CertStatusResolver`) is the one that reads the database, on every request, with no cache.

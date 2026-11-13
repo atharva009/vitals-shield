@@ -10,6 +10,8 @@ processes cannot commit a rebuild at the same time.
 signed the certificate. It is how a verifier finds the right issuer certificate. Ours holds only the `keyIdentifier`
 field (the issuer's SKI), with no issuer name or serial.
 
+**Allow-list** (Phase 2): A set of things that are permitted; anything not listed is refused. For certificates, an in-memory allow-list must be refreshed to learn about new certificates, so a device that enrolls and connects before the next refresh is wrongly refused. VitalsShield does not use one in the handshake path for that reason.
+
 **ARN (Amazon Resource Name)** (Phase 0): AWS's full identifier for a resource, for example
 `arn:aws:kms:us-east-1:000000000000:key/857ab58e-...`. It includes the service, region, account, and key ID. We store
 the full ARN in `kms_keys.kms_key_id` and `ca_issuers.kms_primary_arn`, not the bare key ID, so a key reference is
@@ -50,6 +52,10 @@ used and for how long. Anyone with the issuer's public key can check the signatu
 certificate is signed by the next one. Our device chain is device leaf, Device Issuing Intermediate, Root. A verifier
 checks each link.
 
+**CertificateRequest** (Phase 2): The TLS handshake message in which the server asks the client for a certificate. It can list the CA names the server accepts; ours lists only the current Device Intermediate (`getAcceptedIssuers`). It is sent only on the mTLS port.
+
+**Channel** (Phase 2): Netty's object for one open network connection. Closing it sends a TLS close and ends the TCP connection, even if the client is idle on keep-alive. `ActiveSessionRegistry` keeps the channels per certificate so a revoke can close them.
+
 **ContentSigner** (Phase 1): A BouncyCastle interface: the certificate builder writes the bytes to be signed into its
 output stream, then asks for the signature. It also reports which signature algorithm it uses. `KmsContentSigner`
 implements it by hashing locally and asking KMS to sign the digest.
@@ -69,6 +75,8 @@ is not served yet; HTTP endpoints come in a later phase.
 **CRL Number** (Phase 1): A CRL extension holding a number that increases with each CRL the issuer publishes. It
 lets a relying party tell which of two CRLs is newer. We keep it in `ca_issuers.crl_number` and increment it in the
 same transaction that reads the revoked entries.
+
+**Deny-list** (Phase 2): A set of things that are refused; anything not listed passes this check. `CertificateDenyList` holds revoked, expired, and superseded certificates in memory, keyed by issuer key hash and serial. A new certificate is not on it, so it connects immediately; the per-request DB check confirms its real status.
 
 **DER (Distinguished Encoding Rules)** (Phase 1): A strict binary encoding for ASN.1 where every value has exactly
 one valid encoding. Certificates are signed over their DER bytes, so the encoding must be unique. `.der` files and the
@@ -93,9 +101,13 @@ is a sequence of RDNs.
 produce a pair of numbers (r, s); anyone with the public key can verify them. Every signature in VitalsShield is ECDSA
 on P-256 with SHA-256.
 
+**Ephemeral port** (Phase 2): A free port number picked at run time instead of a fixed one. Integration tests use them for all three listeners so they never collide with a running server on 8443 to 8445. `TestPorts` finds free ones by briefly opening port 0.
+
 **Event loop** (Phase 1): A small number of threads that each handle many connections by never blocking: they run
 short callbacks and move on. Reactor Netty uses event loops. A blocking call on an event loop stalls every connection
 on that thread, which is why KMS calls must not run there.
+
+**Eviction** (Phase 2): Closing a client's live connection on purpose. After a revoke, `SignerRevocationService` closes every channel for that certificate; the measured time was a few milliseconds. The client must reconnect and is then refused.
 
 **Extended Key Usage (EKU)** (Phase 1): A certificate extension listing application purposes for the key, by OID,
 such as TLS client authentication (`1.3.6.1.5.5.7.3.2`) or TLS server authentication (`1.3.6.1.5.5.7.3.1`). It narrows
@@ -121,9 +133,13 @@ used to check another implementation. `scripts/golden_vectors.py` (Python stdlib
 performs signing inside itself, so the key never leaves. AWS KMS keys are backed by HSMs. LocalStack is not: its keys
 are ordinary data in a container.
 
+**HttpHandler** (Phase 2): Spring's lowest-level reactive HTTP entry point: one function from request to response. We build one from the application context (all controllers and WebFilters) and share it between the three Reactor Netty servers.
+
 **Intermediate CA** (Phase 1): A CA whose certificate is signed by the Root (or another intermediate) and which signs
 leaf certificates. It lets the Root key stay offline and lets you replace a compromised issuer without replacing the
 Root. We have two: the Device Issuing Intermediate and the Server TLS CA.
+
+**Keep-alive** (Phase 2): HTTP/1.1 behaviour where one TCP connection carries many requests instead of one. It saves handshakes but means a client can stay connected for a long time, which is why revocation needs per-request checks and socket eviction, not only a handshake check.
 
 **Key custody** (Phase 1): Who or what holds a private key and can use it. With KMS the custodian is the KMS service;
 the application can ask for signatures but cannot read the key. In our local setup LocalStack is the custodian, which
@@ -147,8 +163,14 @@ stops an attacker from moving bytes between adjacent fields. Our strings are wri
 from `.env`. It reproduces the KMS API, not HSM custody or IAM isolation, and loses its keys on restart unless
 persistence is enabled.
 
+**Loopback** (Phase 2): The network interface that only reaches the same machine, address 127.0.0.1. A socket bound to it cannot be reached from another host. All our listeners bind it by default, and the admin listener always does.
+
 **Migration** (Phase 0): A versioned script that changes the database schema. Migrations run in order and are never
 edited after they ship; a change goes in a new migration. Our only migration is `V1__baseline.sql`.
+
+**mTLS (mutual TLS)** (Phase 2): TLS where the client also presents a certificate and proves it holds the private key, so the server knows which device is connected before reading any HTTP. Port 8443 requires it (`ClientAuth.REQUIRE`).
+
+**NewSessionTicket** (Phase 2): A TLS 1.3 message the server sends after the handshake so the client can resume later. The JDK sent one per connection in our tests, 32 bytes with a 1-second lifetime, even with stateless tickets disabled.
 
 **OID (Object Identifier)** (Phase 1): A globally unique dotted number that names something in ASN.1, such as
 `1.2.840.10045.4.3.2` for ecdsa-with-SHA256 or `2.5.29.19` for Basic Constraints. Extensions, algorithms, and EKU
@@ -172,6 +194,10 @@ sign only leaves).
 extensions certificates and CRLs should have and how to validate a chain. "RFC 5280 profile" in this project means
 PKIX.
 
+**Post-handshake gate** (Phase 2): Our check that runs when any TLS handshake completes on 8443, including resumed ones where the trust manager is not called. It reads the peer certificate from the session, registers the channel, and closes it if the certificate is deny-listed.
+
+**PSK (pre-shared key)** (Phase 2): In TLS 1.3 resumption, a secret from an earlier session that the client and server both hold. The client proves it knows the PSK instead of sending a certificate, which is why resumption skips certificate checks.
+
 **-purpose** (Phase 1): An `openssl verify` option that names the use you want to check a certificate for, such as
 `sslclient` (TLS client) or `sslserver` (TLS server). OpenSSL then checks Key Usage and Extended Key Usage on the leaf
 and on every CA in the chain. Our device leaf passes `sslclient` and fails `sslserver` with "unsuitable certificate
@@ -179,6 +205,8 @@ purpose".
 
 **RDN (Relative Distinguished Name)** (Phase 1): One component of a DN, such as `CN=VitalsShield Root CA`. A DN is a
 sequence of RDNs. The order of that sequence in DER is what OpenSSL prints.
+
+**Reactor Netty** (Phase 2): The non-blocking network library under Spring WebFlux. It runs servers on a few event loop threads. We create three `HttpServer` instances with it in `ListenerManager`.
 
 **Reason code** (Phase 1): A CRL entry extension that says why a certificate was revoked, such as `keyCompromise`
 (1), `superseded` (4), or `cessationOfOperation` (5). `CrlReasons` maps our database reasons to these codes. For
@@ -211,6 +239,8 @@ had the key.
 certificates by serial. Ours are 20 random bytes with the top bit cleared, stored as lowercase hex without leading
 zeros.
 
+**Session resumption** (Phase 2): Starting a new TLS connection from a previous session's secrets instead of a full handshake. It is faster but skips certificate validation, so a revoked client could get back in; the post-handshake gate closes that gap.
+
 **SHA-256** (Phase 0): A hash function with a 32-byte output. We use it for signature digests, SKIs (and so `issuer_key_hash`), and the
 fixed-width `sha256(...)` fields inside the canonical encodings.
 
@@ -218,8 +248,14 @@ fixed-width `sha256(...)` fields inside the canonical encodings.
 public key. A child certificate's AKI equals its issuer's SKI. Ours is the SHA-256 of the full SubjectPublicKeyInfo
 DER (32 bytes), and its hex is `issuer_key_hash`.
 
+**SNI (Server Name Indication)** (Phase 2): A field in the TLS ClientHello naming the host the client wants, for example `localhost`. Clients send it with `-servername` in `openssl s_client`; our test client always sends it.
+
 **SPKI (SubjectPublicKeyInfo)** (Phase 1): The ASN.1 structure that holds a public key and its algorithm (for us,
 `id-ecPublicKey` on `prime256v1`). KMS `GetPublicKey` returns it as DER, and we put it straight into the certificate.
+
+**SslHandler** (Phase 2): The Netty pipeline component that runs TLS for one channel. Its `handshakeFuture()` completes when the handshake finishes, and its `SSLEngine` session holds the peer certificate. The post-handshake gate listens on it.
+
+**SslProvider** (Phase 2): Netty's choice of TLS implementation: `JDK` (Java's JSSE) or `OPENSSL` (native). We force `JDK` so our Java trust manager is called exactly as JSSE documents.
 
 **TBS (to-be-signed)** (Phase 1): The part of a certificate or CRL that the signature covers: everything except the
 signature algorithm field outside it and the signature itself. The builder serializes the TBS to DER and hands those
@@ -229,13 +265,21 @@ bytes to the ContentSigner.
 schema and PKI integration tests each start a fresh `postgres:16` container, so they never touch the Compose
 database.
 
+**TLS 1.3** (Phase 2): The current TLS version (RFC 8446). Compared with 1.2 it encrypts the certificates in the handshake, removes renegotiation and old algorithms, and has one handshake shape. Our TLS listeners accept nothing older.
+
+**TLS alert** (Phase 2): A short TLS message that reports an error and usually ends the connection, such as `certificate_required` (116) or `bad_certificate`. A rejected TLS 1.3 client receives it after finishing its own side of the handshake.
+
 **Trust anchor** (Phase 1): A certificate (usually a Root) that a verifier trusts without checking a signature
 above it. Chain validation stops successfully only when it reaches a trust anchor. `TrustAnchors` holds our current
 Root and Device Intermediate for the Phase 2 trust manager.
 
+**Trust manager** (Phase 2): The Java object that decides whether a peer's certificate chain is acceptable during a TLS handshake. The JDK calls `checkClientTrusted` when the client's certificate arrives on a full handshake. Ours is `DynamicMtlsTrustManager`.
+
 **Validity period** (Phase 1): The `notBefore` and `notAfter` times between which a certificate may be accepted. We
 set `notBefore` to now minus 60 seconds to absorb clock skew. The Root gets 10 years, intermediates 1 year, device
 leaves 12 hours, the gateway leaf 24 hours.
+
+**WebFilter** (Phase 2): A Spring WebFlux component that runs before controllers and can pass the request on or answer it. `PortEnforcementWebFilter` runs first (404 for wrong ports), then `CertStatusResolver` (403 for unaccepted certificates).
 
 **X.509** (Phase 1): The ITU standard format for public key certificates and CRLs, defined in ASN.1. Version 3 added
 extensions. RFC 5280 profiles it for internet use.

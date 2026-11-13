@@ -11,6 +11,7 @@ from the spec.
 | :--- | :--- | :--- |
 | 0 | [Scaffold: build, Compose stack, schema, KMS smoke tests](phase-00-scaffold.md) | `d23ebe7`, `7d8841d` |
 | 1 | [PKI core: KMS-backed CA hierarchy, profiles, CRLs, reconciliation, boot sequence](phase-01-pki-core.md) | `236b697` |
+| 2 | [Listeners, mTLS, deny-list trust, per-request status, live socket eviction](phase-02-listeners-mtls.md) | `7d531f1` |
 | | [Glossary](GLOSSARY.md) | |
 
 ## How the whole system fits together
@@ -27,6 +28,13 @@ TLS leaf certificate from `KmsCertificateIssuer`; finally `TrustAnchors` loads t
 Intermediate. Every CA signature is produced by KMS from a SHA-256 digest through `KmsContentSigner`, so no CA private
 key ever exists in the JVM. `CrlService` can produce signed CRLs for the Root and the Device Intermediate as PEM
 strings. `crypto-common` holds `CanonicalBytes` and `CanonicalEncodings`, the byte layouts that later phases will sign
-and verify. The server binds no ports yet: `spring.main.web-application-type` is `none`, and the
-`BootSequence` has a marked hook where Phase 2 will bind listeners as the final step. The `simulator` module is still
-a stub.
+and verify. Spring itself never binds a port (`spring.main.web-application-type` is `none`). Phase 2 added
+two more boot steps: `CertificateDenyList` loads revoked, expired, and superseded certificates into memory, and then,
+always last, `ListenerManager` binds three Reactor Netty servers on 127.0.0.1 that share one Spring `HttpHandler`:
+8443 (TLS 1.3, client certificate required), 8444 (TLS 1.3, public: CRLs now, enrollment later), and 8445 (plain HTTP,
+admin). `PortEnforcementWebFilter` gives each port its own paths and answers everything else with an empty 404. A
+device on 8443 passes three checks: `DynamicMtlsTrustManager` in the handshake (PKIX against the current hierarchy,
+leaf policy, deny-list, all in memory), `PostHandshakeGate` after every handshake including resumed ones, and
+`CertStatusResolver` on every request (the `certificates` row, read on `boundedElastic`, no cache). Revocation goes
+through `SignerRevocationService`: deny-list first, then the database, then `ActiveSessionRegistry` closes the
+device's open connections. The `simulator` module is still a stub; Phase 3 will use `/api/v1/telemetry/ping`.

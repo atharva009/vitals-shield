@@ -174,6 +174,10 @@ sequenceDiagram
    `test` / `test`. Phase 1 changed this client from async to sync; see the Phase 1 note.
 4. With nothing else to do in Phase 0, the process exits.
 
+Changed in Phase 2: the process now stays running. `BootSequence` binds three Reactor Netty listeners as its
+last step, and `spring.main.keep-alive: true` keeps the JVM alive (Netty's threads are daemon threads). Spring still
+never binds a port itself; `web-application-type` is still `none`. See the Phase 2 note.
+
 ```mermaid
 sequenceDiagram
     participant M as main()
@@ -426,3 +430,7 @@ format.
 A: Ports must open only after startup checks pass (Phase 1's reconciliation, and Phase 2's trust store load). With
 `web-application-type: none`, Spring cannot open a port on its own, so there is no window where the server accepts
 connections with an unchecked hierarchy.
+
+Changed in Phase 2: the server now listens on 8443, 8444, and 8445, bound by `ListenerManager` only as the last
+boot step (after reconciliation, trust anchors, and deny-list seeding). The answer above is still why Spring itself
+never binds a port.
