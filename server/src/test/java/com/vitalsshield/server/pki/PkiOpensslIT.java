@@ -66,6 +66,8 @@ class PkiOpensslIT {
     static void props(DynamicPropertyRegistry registry) throws IOException {
         Path dir = Files.createTempDirectory("vs-openssl-it");
         registry.add("vitalsshield.pki.trust-file", () -> dir.resolve("root-ca.pem").toString());
+        // Phase 2: boot now binds listeners; use free ports so tests never clash with a running bootRun.
+        com.vitalsshield.server.testsupport.TestPorts.register(registry);
     }
 
     @Autowired CertificateIssuer issuer;

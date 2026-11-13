@@ -56,6 +56,8 @@ public class TestTiersPlugin implements Plugin<Project> {
         project.getTasks().withType(Test.class).configureEach(test -> {
             test.getTestLogging().events(TestLogEvent.PASSED, TestLogEvent.SKIPPED, TestLogEvent.FAILED);
             test.getTestLogging().setExceptionFormat(TestExceptionFormat.FULL);
+            // Same JSSE setting the server's main() applies: no stateless TLS session tickets.
+            test.systemProperty("jdk.tls.server.enableSessionTicketExtension", "false");
             if (MAY_BE_EMPTY.contains(test.getName())) {
                 test.getFailOnNoDiscoveredTests().set(false);
             }

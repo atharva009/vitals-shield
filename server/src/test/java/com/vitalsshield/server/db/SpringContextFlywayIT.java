@@ -36,6 +36,8 @@ class SpringContextFlywayIT {
     static void trustFile(DynamicPropertyRegistry registry) throws java.io.IOException {
         java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("vs-flyway-it");
         registry.add("vitalsshield.pki.trust-file", () -> dir.resolve("root-ca.pem").toString());
+        // Phase 2: boot now binds listeners; use free ports so tests never clash with a running bootRun.
+        com.vitalsshield.server.testsupport.TestPorts.register(registry);
     }
 
     @Autowired

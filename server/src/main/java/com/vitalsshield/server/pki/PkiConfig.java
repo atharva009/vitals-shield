@@ -9,6 +9,11 @@ import org.springframework.context.annotation.Configuration;
 public class PkiConfig {
 
     @Bean
+    public Clock clock() {
+        return Clock.systemUTC();
+    }
+
+    @Bean
     public CertificateProfiles certificateProfiles(PkiProperties props) {
         return new CertificateProfiles(Clock.systemUTC(), new SecureRandom(), props.publicBaseUrl());
     }

@@ -1,13 +1,25 @@
 #!/usr/bin/env bash
-# Phase 0 KMS gate: create an ECC_NIST_P256 key, sign with it, and check
-# whether the key survives a LocalStack container restart.
+# Phase 0 KMS gate: create an ECC_NIST_P256 key and sign with it.
+# With --restart, also restart LocalStack and check whether the key survives.
+# WARNING: --restart wipes every KMS key in LocalStack (persistence is off), so
+# the next server boot rebuilds the whole CA hierarchy and revokes all leaves.
 # Runs awslocal inside the LocalStack container; no host AWS CLI is needed.
+#
+# Usage: scripts/kms-probe.sh [--restart]
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
+RESTART=false
+for arg in "$@"; do
+  case "$arg" in
+    --restart) RESTART=true ;;
+    *) echo "usage: $0 [--restart]" >&2; exit 2 ;;
+  esac
+done
+
 CREATE=fail
 SIGN=fail
-SURVIVES_RESTART=no
+SURVIVES_RESTART=skipped
 
 # awslocal prints a deprecation banner on stderr; keep stderr in a log and
 # show it only if a step fails, so stdout stays a single result line.
@@ -41,13 +53,16 @@ if [ -n "$KEY_ID" ] && [ "$KEY_ID" != "None" ]; then
     SIGN=ok
   fi
 
-  docker compose restart localstack >/dev/null 2>&1
-  if wait_healthy; then
-    if aws_ls kms describe-key --key-id "$KEY_ID" >/dev/null 2>&1; then
-      SURVIVES_RESTART=yes
+  if [ "$RESTART" = true ]; then
+    SURVIVES_RESTART=no
+    docker compose restart localstack >/dev/null 2>&1
+    if wait_healthy; then
+      if aws_ls kms describe-key --key-id "$KEY_ID" >/dev/null 2>&1; then
+        SURVIVES_RESTART=yes
+      fi
+    else
+      echo "localstack did not become healthy after restart" >&2
     fi
-  else
-    echo "localstack did not become healthy after restart" >&2
   fi
 fi
 

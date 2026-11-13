@@ -18,8 +18,13 @@ Wearable vitals telemetry with a two-tier KMS-backed PKI. See
 
 ```sh
 docker compose up -d          # postgres:16 on host port 5433 (container 5432), LocalStack (KMS only) on 4566
-scripts/kms-probe.sh          # KMS gate: CREATE=ok|fail SIGN=ok|fail SURVIVES_RESTART=yes|no
+scripts/kms-probe.sh          # KMS gate: CREATE=ok|fail SIGN=ok|fail SURVIVES_RESTART=skipped
+scripts/kms-probe.sh --restart  # also restarts LocalStack: SURVIVES_RESTART=yes|no (see warning below)
 ```
+
+Changed in Phase 2: the probe restarts LocalStack only with `--restart`. LocalStack runs without persistence, so a
+restart wipes every KMS key, and the next server boot finds the CA keys missing, rebuilds the whole hierarchy, and
+revokes every issued certificate.
 
 `nsmithuk/local-kms` is available as a fallback under `docker compose --profile kms-fallback up -d`. It does not start by default.
 
@@ -42,3 +47,17 @@ scripts/kms-probe.sh          # KMS gate: CREATE=ok|fail SIGN=ok|fail SURVIVES_R
   `CanonicalEncodingsTest`.
 - `PkiOpensslIT` cross-checks certificates and CRLs with OpenSSL 3 (`OPENSSL_BIN`, default
   `$(brew --prefix openssl@3)/bin/openssl`; skipped if not found) and leaves the PEMs in `build/pki-out/`.
+
+## Listeners (Phase 2)
+
+`bootRun` now stays running. The last boot step binds three listeners, all on `127.0.0.1` by default
+(`vitalsshield.listeners.*`):
+
+| Port | Protocol | Serves |
+| :--- | :--- | :--- |
+| 8443 | TLS 1.3, client certificate required | `/api/v1/telemetry/**`, `/api/v1/devices/renew`, `/api/v1/devices/renew-challenge` |
+| 8444 | TLS 1.3, no client certificate | enrollment routes (later), `/api/v1/pki/intermediate-crl.pem`, `/api/v1/pki/root-crl.pem` |
+| 8445 | plain HTTP, always 127.0.0.1 | `/api/v1/admin/**` (today: `/api/v1/admin/boot-status`) |
+
+Any other path on a port returns 404 with an empty body. Stop the server with Ctrl-C. `ResumptionIT` needs
+OpenSSL 3 (`OPENSSL_BIN`, default `$(brew --prefix openssl@3)/bin/openssl`).

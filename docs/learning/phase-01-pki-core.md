@@ -582,12 +582,13 @@ Does NOT defend against:
 All output below was produced on 2026-11-13 against the running stack. Long hex dumps (public keys, signatures) are
 cut where marked.
 
-**Rebuild after key loss, for real.** `scripts/kms-probe.sh` restarts LocalStack, which wipes every key. The next
+**Rebuild after key loss, for real.** `scripts/kms-probe.sh --restart` restarts LocalStack, which wipes every key
+(before Phase 2 the probe always restarted; this output was captured then, without the flag). The next
 boot finds all four ACTIVE keys missing and rebuilds. Look for `missing or not Enabled in KMS`, then `REBUILT`, then a
 second run with `NO_CHANGE`.
 
 ```
-$ scripts/kms-probe.sh
+$ scripts/kms-probe.sh --restart
 CREATE=ok SIGN=ok SURVIVES_RESTART=no
 
 $ ./gradlew :server:bootRun --args='--spring.profiles.active=local'   (log lines filtered)

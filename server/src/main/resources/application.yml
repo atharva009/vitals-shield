@@ -5,6 +5,9 @@ spring:
     # Required: later phases bind every port manually after startup
     # reconciliation, so Spring must never bind a port itself.
     web-application-type: none
+    # Reactor Netty event-loop threads are daemon threads, so without this the JVM exits right after
+    # BootSequence binds the listeners. Keeps one non-daemon thread alive until the context closes.
+    keep-alive: true
   datasource:
     url: jdbc:postgresql://localhost:5433/vitalsshield  # Compose maps host 5433 -> container 5432
     username: vitalsshield
@@ -21,3 +24,10 @@ vitalsshield:
     trust-file: var/trust/root-ca.pem
     device-leaf-ttl: PT12H
     gateway-leaf-ttl: PT24H
+  listeners:
+    bind-host: 127.0.0.1
+    mtls-port: 8443
+    public-port: 8444
+    admin-port: 8445
+  eviction:
+    enabled: true

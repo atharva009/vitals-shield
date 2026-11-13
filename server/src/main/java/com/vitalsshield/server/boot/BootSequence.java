@@ -1,9 +1,11 @@
 package com.vitalsshield.server.boot;
 
+import com.vitalsshield.server.gateway.ListenerManager;
 import com.vitalsshield.server.pki.GatewayTlsMaterial;
 import com.vitalsshield.server.pki.HierarchyReconciler;
 import com.vitalsshield.server.pki.ReconcileResult;
 import com.vitalsshield.server.pki.TrustAnchors;
+import com.vitalsshield.server.pki.trust.CertificateDenyList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
@@ -13,9 +15,10 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
 /**
- * Ordered startup after context refresh (Flyway has already migrated):
- * reconcile hierarchy, issue gateway TLS material, reload trust anchors. Runs on the boot thread, so the blocking KMS
- * calls are allowed here. Disabled with {@code vitalsshield.boot.enabled=false} (schema-only tests).
+ * Ordered startup after context refresh (Flyway has already migrated): reconcile hierarchy, issue gateway TLS
+ * material, reload trust anchors, seed the deny-list, and only then bind the listeners. Runs on the boot thread, so the
+ * blocking KMS and JDBC calls are allowed here. Disabled with {@code vitalsshield.boot.enabled=false}, in which case
+ * nothing binds.
  */
 @Component
 @ConditionalOnProperty(name = "vitalsshield.boot.enabled", havingValue = "true", matchIfMissing = true)
@@ -26,13 +29,17 @@ public class BootSequence implements ApplicationRunner {
     private final HierarchyReconciler reconciler;
     private final GatewayTlsMaterial gatewayTls;
     private final TrustAnchors trustAnchors;
+    private final CertificateDenyList denyList;
+    private final ListenerManager listeners;
     private final ApplicationEventPublisher events;
 
     public BootSequence(HierarchyReconciler reconciler, GatewayTlsMaterial gatewayTls, TrustAnchors trustAnchors,
-                        ApplicationEventPublisher events) {
+                        CertificateDenyList denyList, ListenerManager listeners, ApplicationEventPublisher events) {
         this.reconciler = reconciler;
         this.gatewayTls = gatewayTls;
         this.trustAnchors = trustAnchors;
+        this.denyList = denyList;
+        this.listeners = listeners;
         this.events = events;
     }
 
@@ -52,10 +59,13 @@ public class BootSequence implements ApplicationRunner {
         trustAnchors.reload();
         events.publishEvent(new BootStepCompleted(BootStep.TRUST_ANCHORS_LOADED));
 
-        // ===================================================================================
-        // PHASE 2 HOOK: bind listeners (8443 mTLS, 8444, 8445) here as the final step, then
-        // publish new BootStepCompleted(BootStep.BIND_LISTENERS). Nothing binds before this.
-        // ===================================================================================
+        denyList.seedFromDb();
+        denyList.startPeriodicRefresh();
+        events.publishEvent(new BootStepCompleted(BootStep.DENY_LIST_SEEDED));
+
+        // Last step, always: ports open only after every check above has passed.
+        listeners.bindAll();
+        events.publishEvent(new BootStepCompleted(BootStep.LISTENERS_BOUND));
         return result;
     }
 }

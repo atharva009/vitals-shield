@@ -138,9 +138,14 @@ automatically.
 
 1. `docker compose exec -T localstack awslocal kms create-key --key-spec ECC_NIST_P256 --key-usage SIGN_VERIFY`.
 2. `kms sign` on a small base64 message with `ECDSA_SHA_256`, `--message-type RAW`.
-3. `docker compose restart localstack`, wait for healthy, then `kms describe-key` on the same key.
-4. Print one line: `CREATE=ok|fail SIGN=ok|fail SURVIVES_RESTART=yes|no`. Stderr (which carries an `awslocal`
-   deprecation banner) is kept in a temp file and shown only if CREATE or SIGN fails.
+3. Only with `--restart`: `docker compose restart localstack`, wait for healthy, then `kms describe-key` on the same
+   key. Without the flag this step is skipped.
+4. Print one line: `CREATE=ok|fail SIGN=ok|fail SURVIVES_RESTART=yes|no|skipped`. Stderr (which carries an
+   `awslocal` deprecation banner) is kept in a temp file and shown only if CREATE or SIGN fails.
+
+Changed in Phase 2: the restart moved behind `--restart`. A LocalStack restart wipes every KMS key (no persistence),
+so the next server boot finds the four CA keys missing, rebuilds the whole hierarchy, and revokes every certificate
+issued under the old one. Running the probe by default should not have that side effect.
 
 ```mermaid
 sequenceDiagram
@@ -150,6 +155,7 @@ sequenceDiagram
     L-->>P: KeyId
     P->>L: kms sign RAW ECDSA_SHA_256
     L-->>P: Signature
+    Note over P,L: steps below only with --restart
     P->>L: docker compose restart localstack
     P->>L: poll health until healthy
     P->>L: kms describe-key KeyId
@@ -286,11 +292,19 @@ vitals-shield-localstack-1   localstack/localstack:2026.10.7   "docker-entrypoin
 vitals-shield-postgres-1     postgres:16                       "docker-entrypoint.s…"   postgres     29 minutes ago   Up 8 minutes (healthy)   0.0.0.0:5433->5432/tcp, [::]:5433->5432/tcp
 ```
 
-**KMS probe.** Look for `CREATE=ok SIGN=ok`. `SURVIVES_RESTART=no` is expected. Note: this restarts LocalStack and
-destroys every KMS key in it; the next `bootRun` will rebuild the hierarchy (shown in the Phase 1 note).
+**KMS probe.** Look for `CREATE=ok SIGN=ok`. By default (changed in Phase 2) LocalStack is not restarted:
 
 ```
 $ scripts/kms-probe.sh
+CREATE=ok SIGN=ok SURVIVES_RESTART=skipped
+```
+
+With `--restart`, `SURVIVES_RESTART=no` is expected. This destroys every KMS key in LocalStack, and the next `bootRun`
+rebuilds the hierarchy (shown in the Phase 1 note). Output from the run used for these notes, before the flag
+existed, when the restart always happened:
+
+```
+$ scripts/kms-probe.sh            (now: scripts/kms-probe.sh --restart)
 CREATE=ok SIGN=ok SURVIVES_RESTART=no
 ```
 

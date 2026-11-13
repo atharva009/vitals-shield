@@ -63,6 +63,8 @@ class BootSequenceIT {
     static void props(DynamicPropertyRegistry registry) throws IOException {
         trustDir = Files.createTempDirectory("vs-boot-it");
         registry.add("vitalsshield.pki.trust-file", () -> trustDir.resolve("root-ca.pem").toString());
+        // Phase 2: boot now binds listeners; use free ports so tests never clash with a running bootRun.
+        com.vitalsshield.server.testsupport.TestPorts.register(registry);
     }
 
     @TestConfiguration
@@ -93,7 +95,8 @@ class BootSequenceIT {
     @Order(1)
     void stepsRunInOrder() {
         assertThat(capture.steps()).containsExactly(
-                BootStep.RECONCILED, BootStep.GATEWAY_TLS_ISSUED, BootStep.TRUST_ANCHORS_LOADED);
+                BootStep.RECONCILED, BootStep.GATEWAY_TLS_ISSUED, BootStep.TRUST_ANCHORS_LOADED,
+                BootStep.DENY_LIST_SEEDED, BootStep.LISTENERS_BOUND);
     }
 
     @Test
@@ -106,7 +109,8 @@ class BootSequenceIT {
 
         assertThat(bootSequence.runBoot()).isEqualTo(ReconcileResult.REBUILT);
         assertThat(capture.steps()).containsExactly(
-                BootStep.RECONCILED, BootStep.GATEWAY_TLS_ISSUED, BootStep.TRUST_ANCHORS_LOADED);
+                BootStep.RECONCILED, BootStep.GATEWAY_TLS_ISSUED, BootStep.TRUST_ANCHORS_LOADED,
+                BootStep.DENY_LIST_SEEDED, BootStep.LISTENERS_BOUND);
 
         CaIssuer activeServerCa = issuers.requireActive(KeyPurpose.SERVER_TLS_CA);
         assertThat(activeServerCa.issuerKeyHash()).isNotEqualTo(oldServerCa.issuerKeyHash());

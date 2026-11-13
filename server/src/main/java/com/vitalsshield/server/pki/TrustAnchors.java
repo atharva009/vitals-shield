@@ -1,5 +1,6 @@
 package com.vitalsshield.server.pki;
 
+import com.vitalsshield.server.pki.trust.TrustAnchorSource;
 import java.security.cert.X509Certificate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -7,7 +8,7 @@ import org.springframework.stereotype.Component;
 
 /** Current Root and Device Intermediate certificates from ca_issuers. Read by the Phase 2 mTLS trust manager. */
 @Component
-public class TrustAnchors {
+public class TrustAnchors implements TrustAnchorSource {
 
     private static final Logger log = LoggerFactory.getLogger(TrustAnchors.class);
 
@@ -26,10 +27,12 @@ public class TrustAnchors {
                 CertificateProfiles.issuerKeyHash(root), CertificateProfiles.issuerKeyHash(deviceInt));
     }
 
+    @Override
     public X509Certificate root() {
         return require().root();
     }
 
+    @Override
     public X509Certificate deviceIntermediate() {
         return require().deviceIntermediate();
     }
