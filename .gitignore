@@ -7,3 +7,5 @@ node_modules/
 .idea/
 *.iml
 .DS_Store
+# `build/` above also matches the buildSrc Java package directory; keep its source tracked.
+!buildSrc/src/main/java/com/vitalsshield/build/

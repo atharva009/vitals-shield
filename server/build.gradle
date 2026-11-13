@@ -1,0 +1,28 @@
+plugins {
+    id 'vitalsshield.test-tiers'
+    alias(libs.plugins.spring.boot)
+}
+
+dependencies {
+    implementation platform(libs.spring.boot.dependencies)
+    implementation platform(libs.aws.sdk.bom)
+
+    implementation project(':crypto-common')
+    implementation libs.spring.boot.starter.webflux
+    implementation libs.spring.boot.starter.jdbc
+    // Boot 4 is modular: without this starter Flyway is on the classpath but never runs.
+    implementation libs.spring.boot.starter.flyway
+    implementation libs.flyway.database.postgresql
+    runtimeOnly libs.postgresql
+    implementation libs.aws.kms
+    implementation libs.bcpkix
+    implementation libs.nimbus.jose.jwt
+
+    testImplementation libs.spring.boot.starter.webflux.test
+    testImplementation libs.spring.boot.starter.jdbc.test
+    testImplementation libs.spring.boot.starter.flyway.test
+    testImplementation libs.reactor.test
+    testImplementation libs.spring.boot.testcontainers
+    testImplementation libs.testcontainers.postgresql
+    testImplementation libs.testcontainers.junit.jupiter
+}

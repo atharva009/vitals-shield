@@ -6,7 +6,7 @@ spring:
     # reconciliation, so Spring must never bind a port itself.
     web-application-type: none
   datasource:
-    url: jdbc:postgresql://localhost:5432/vitalsshield
+    url: jdbc:postgresql://localhost:5433/vitalsshield  # Compose maps host 5433 -> container 5432
     username: vitalsshield
     password: vitalsshield
   flyway:

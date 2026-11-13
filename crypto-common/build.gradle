@@ -1,0 +1,9 @@
+plugins {
+    id 'vitalsshield.test-tiers'
+    id 'java-library'
+}
+
+dependencies {
+    api libs.bcpkix
+    api libs.nimbus.jose.jwt
+}
