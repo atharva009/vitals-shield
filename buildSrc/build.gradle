@@ -6,7 +6,7 @@ gradlePlugin {
     plugins {
         testTiers {
             id = 'vitalsshield.test-tiers'
-            implementationClass = 'com.vitalsshield.build.TestTiersPlugin'
+            implementationClass = 'com.vitalsshield.gradle.TestTiersPlugin'
         }
     }
 }

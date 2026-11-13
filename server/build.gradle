@@ -14,7 +14,13 @@ dependencies {
     implementation libs.spring.boot.starter.flyway
     implementation libs.flyway.database.postgresql
     runtimeOnly libs.postgresql
-    implementation libs.aws.kms
+    // Sync KMS client on the JDK HTTP stack. The SDK's Netty (async) and Apache
+    // HTTP clients are excluded so neither can be picked up by accident.
+    implementation(libs.aws.kms) {
+        exclude group: 'software.amazon.awssdk', module: 'netty-nio-client'
+        exclude group: 'software.amazon.awssdk', module: 'apache-client'
+    }
+    implementation libs.aws.url.connection.client
     implementation libs.bcpkix
     implementation libs.nimbus.jose.jwt
 
@@ -25,4 +31,13 @@ dependencies {
     testImplementation libs.spring.boot.testcontainers
     testImplementation libs.testcontainers.postgresql
     testImplementation libs.testcontainers.junit.jupiter
+}
+
+// Run from the repo root so relative paths (var/trust/root-ca.pem) resolve there, not under server/.
+tasks.named('bootRun') {
+    workingDir = rootProject.projectDir
+}
+
+tasks.withType(Test).configureEach {
+    systemProperty 'vitalsshield.repoRoot', rootProject.projectDir.absolutePath
 }

@@ -30,6 +30,7 @@ testcontainers-junit-jupiter = { module = "org.testcontainers:testcontainers-jun
 # Pinned (not managed by Boot)
 aws-sdk-bom = { module = "software.amazon.awssdk:bom", version.ref = "awsSdk" }
 aws-kms = { module = "software.amazon.awssdk:kms" }
+aws-url-connection-client = { module = "software.amazon.awssdk:url-connection-client" }
 bcpkix = { module = "org.bouncycastle:bcpkix-jdk18on", version.ref = "bouncycastle" }
 nimbus-jose-jwt = { module = "com.nimbusds:nimbus-jose-jwt", version.ref = "nimbusJoseJwt" }
 

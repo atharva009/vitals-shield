@@ -18,13 +18,13 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import software.amazon.awssdk.core.SdkBytes;
-import software.amazon.awssdk.services.kms.KmsAsyncClient;
+import software.amazon.awssdk.services.kms.KmsClient;
 import software.amazon.awssdk.services.kms.model.KeySpec;
 import software.amazon.awssdk.services.kms.model.KeyUsageType;
 import software.amazon.awssdk.services.kms.model.MessageType;
 import software.amazon.awssdk.services.kms.model.SigningAlgorithmSpec;
 
-/** Talks to the Compose LocalStack on :4566 through the real {@link KmsAsyncClient} bean. */
+/** Talks to the Compose LocalStack on :4566 through the real {@link KmsClient} bean. */
 @Tag("integration")
 @ActiveProfiles("local")
 @SpringBootTest(classes = KmsConfig.class)
@@ -34,14 +34,14 @@ class KmsSmokeIT {
     private static final byte[] MESSAGE = "vitalsshield-kms-smoke".getBytes(StandardCharsets.UTF_8);
 
     @Autowired
-    KmsAsyncClient kms;
+    KmsClient kms;
 
     @Test
     void createSignVerify() throws Exception {
         String keyId = createKey();
         byte[] signature = sign(keyId);
 
-        byte[] spkiDer = kms.getPublicKey(r -> r.keyId(keyId)).join().publicKey().asByteArray();
+        byte[] spkiDer = kms.getPublicKey(r -> r.keyId(keyId)).publicKey().asByteArray();
         PublicKey publicKey = KeyFactory.getInstance("EC").generatePublic(new X509EncodedKeySpec(spkiDer));
 
         Signature verifier = Signature.getInstance("SHA256withECDSA");
@@ -66,7 +66,7 @@ class KmsSmokeIT {
 
     private String createKey() {
         return kms.createKey(r -> r.keySpec(KeySpec.ECC_NIST_P256).keyUsage(KeyUsageType.SIGN_VERIFY))
-                .join().keyMetadata().keyId();
+                .keyMetadata().keyId();
     }
 
     private byte[] sign(String keyId) {
@@ -74,6 +74,6 @@ class KmsSmokeIT {
                         .message(SdkBytes.fromByteArray(MESSAGE))
                         .messageType(MessageType.RAW)
                         .signingAlgorithm(SigningAlgorithmSpec.ECDSA_SHA_256))
-                .join().signature().asByteArray();
+                .signature().asByteArray();
     }
 }

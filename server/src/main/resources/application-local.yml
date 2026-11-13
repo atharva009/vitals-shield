@@ -4,3 +4,6 @@ vitalsshield:
     region: us-east-1
     access-key-id: test
     secret-access-key: test
+  pki:
+    # Local profile only: a missing/disabled KMS key rebuilds the whole CA hierarchy.
+    allow-hierarchy-rebuild: true

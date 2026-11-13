@@ -12,3 +12,12 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+
+vitalsshield:
+  pki:
+    public-base-url: https://localhost:8444
+    # Production default: never regenerate CA keys; a missing key fails startup.
+    allow-hierarchy-rebuild: false
+    trust-file: var/trust/root-ca.pem
+    device-leaf-ttl: PT12H
+    gateway-leaf-ttl: PT24H

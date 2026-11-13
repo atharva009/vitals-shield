@@ -27,7 +27,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Tag("integration")
 @Testcontainers
 @ActiveProfiles("local")
-@SpringBootTest
+// BootSequence would insert ACTIVE kms_keys rows at startup; these tests own that table, so boot is off.
+@SpringBootTest(properties = "vitalsshield.boot.enabled=false")
 class SchemaMigrationIT {
 
     @Container

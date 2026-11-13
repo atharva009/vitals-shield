@@ -1,4 +1,4 @@
-package com.vitalsshield.build;
+package com.vitalsshield.gradle;
 
 import java.util.Set;
 import org.gradle.api.Plugin;
