@@ -1,0 +1,9 @@
+.env
+var/
+simulator-state/
+build/
+.gradle/
+node_modules/
+.idea/
+*.iml
+.DS_Store

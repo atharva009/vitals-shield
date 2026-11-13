@@ -1,0 +1,41 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: vitalsshield
+      POSTGRES_PASSWORD: vitalsshield
+      POSTGRES_DB: vitalsshield
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vitalsshield -d vitalsshield"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  localstack:
+    # Current LocalStack docs use localstack/localstack with LOCALSTACK_AUTH_TOKEN.
+    image: localstack/localstack:2026.10.7
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: kms
+      LOCALSTACK_AUTH_TOKEN: ${LOCALSTACK_AUTH_TOKEN}
+    healthcheck:
+      # The image ships without curl, so python3 probes the same health URL.
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:4566/_localstack/health', timeout=4).status == 200 else 1)"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  local-kms:
+    image: nsmithuk/local-kms
+    profiles: ["kms-fallback"]
+    ports:
+      - "8080:8080"
+
+volumes:
+  pgdata:

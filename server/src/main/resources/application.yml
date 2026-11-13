@@ -1,0 +1,14 @@
+spring:
+  application:
+    name: vitalsshield-server
+  main:
+    # Required: later phases bind every port manually after startup
+    # reconciliation, so Spring must never bind a port itself.
+    web-application-type: none
+  datasource:
+    url: jdbc:postgresql://localhost:5432/vitalsshield
+    username: vitalsshield
+    password: vitalsshield
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
