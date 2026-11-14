@@ -119,7 +119,7 @@ class MtlsListenerIT {
         assertThat(server.bean(BootStatusTracker.class).completed())
                 .extracting(BootStatusTracker.Completed::step)
                 .containsExactly(BootStep.RECONCILED, BootStep.GATEWAY_TLS_ISSUED, BootStep.TRUST_ANCHORS_LOADED,
-                        BootStep.DENY_LIST_SEEDED, BootStep.LISTENERS_BOUND);
+                        BootStep.DENY_LIST_SEEDED, BootStep.CRLS_PUBLISHED, BootStep.LISTENERS_BOUND);
     }
 
     @Test
@@ -331,6 +331,89 @@ class MtlsListenerIT {
                 CertificateProfiles.issuerKeyHash(server.bean(TrustAnchors.class).deviceIntermediate()));
     }
 
+    // ---- CRL caching and republication (Phase 2.1) ---------------------------------------------------------------
+
+    @Test
+    @Order(32)
+    void crlGetsDoNotSign() throws Exception {
+        awaitCrlSettled(server);
+        com.vitalsshield.server.kms.KmsSigner signer = server.bean(com.vitalsshield.server.kms.KmsSigner.class);
+        long signsBefore = signer.signCount();
+        long numberBefore = deviceIntCrlNumber(server);
+
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(16);
+        try {
+            List<java.util.concurrent.Future<String>> bodies = new ArrayList<>();
+            for (int i = 0; i < 100; i++) {
+                bodies.add(pool.submit(() -> {
+                    try (Connection c = MtlsTestClient.connect(server.ports().pub(), server.root(), null, List.of())) {
+                        Response r = c.get("/api/v1/pki/intermediate-crl.pem");
+                        assertThat(r.status()).isEqualTo(200);
+                        return r.body();
+                    }
+                }));
+            }
+            java.util.Set<String> distinct = new java.util.HashSet<>();
+            for (java.util.concurrent.Future<String> f : bodies) {
+                distinct.add(f.get(30, java.util.concurrent.TimeUnit.SECONDS));
+            }
+            assertThat(distinct).as("all 100 bodies identical").hasSize(1);
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(signer.signCount()).as("KMS Sign calls").isEqualTo(signsBefore);
+        assertThat(deviceIntCrlNumber(server)).as("crl_number").isEqualTo(numberBefore);
+    }
+
+    @Test
+    @Order(33)
+    void crlRepublishedOnRevoke() throws Exception {
+        awaitCrlSettled(server);
+        // Newest CRL Number issued by anyone is crl_number - 1 (other servers in this class share the DB).
+        long nextNumber = deviceIntCrlNumber(server);
+        Leaf leaf = TestDevices.enroll(server.ctx(), "dev_crl_one");
+
+        revoke(server, leaf);
+
+        long deadline = System.nanoTime() + Duration.ofSeconds(2).toNanos();
+        X509CRL crl = fetchIntermediateCrl(server);
+        while (crl.getRevokedCertificate(leaf.cert().getSerialNumber()) == null && System.nanoTime() < deadline) {
+            Thread.sleep(25);
+            crl = fetchIntermediateCrl(server);
+        }
+        assertThat(crl.getRevokedCertificate(leaf.cert().getSerialNumber())).as("serial listed within 2 s").isNotNull();
+        assertThat(crlNumberOf(crl)).as("exactly one higher than the newest CRL")
+                .isEqualTo(java.math.BigInteger.valueOf(nextNumber));
+        awaitCrlSettled(server);
+        assertThat(deviceIntCrlNumber(server)).as("one regeneration").isEqualTo(nextNumber + 1);
+    }
+
+    @Test
+    @Order(34)
+    void crlBurstCoalesced() throws Exception {
+        awaitCrlSettled(server);
+        long numberBefore = deviceIntCrlNumber(server);
+        List<Leaf> leaves = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            leaves.add(TestDevices.enroll(server.ctx(), "dev_burst_" + i));
+        }
+
+        SignerRevocationService svc = server.bean(SignerRevocationService.class);
+        reactor.core.publisher.Flux.fromIterable(leaves)
+                .flatMap(l -> svc.revoke(l.key(), "KEY_COMPROMISE"), 10)
+                .collectList()
+                .block(Duration.ofSeconds(30));
+
+        awaitCrlSettled(server);
+        X509CRL crl = fetchIntermediateCrl(server);
+        for (Leaf l : leaves) {
+            assertThat(crl.getRevokedCertificate(l.cert().getSerialNumber())).as(l.deviceId()).isNotNull();
+        }
+        long rose = deviceIntCrlNumber(server) - numberBefore;
+        System.out.println("CRL_BURST crl_number rose by " + rose + " for 10 concurrent revocations");
+        assertThat(rose).isBetween(1L, 3L);
+    }
+
     // ---- restarts (last: they replace the running server) -------------------------------------------------------
 
     @Test
@@ -367,6 +450,47 @@ class MtlsListenerIT {
     }
 
     // ---- helpers ------------------------------------------------------------------------------------------------
+
+    /** DB crl_number of the ACTIVE Device Intermediate: the next number CrlService will use. */
+    private static long deviceIntCrlNumber(Server s) {
+        return s.bean(JdbcTemplate.class).queryForObject("""
+                SELECT ci.crl_number FROM ca_issuers ci JOIN kms_keys k ON k.kms_key_id = ci.kms_primary_arn
+                 WHERE k.purpose = 'DEVICE_INTERMEDIATE' AND k.status = 'ACTIVE' AND ci.status = 'ACTIVE'
+                """, Long.class);
+    }
+
+    /**
+     * Waits until no CRL regeneration is running or pending in this server. (Not "cached number == DB - 1": other
+     * servers started by this class against the same DB also publish CRLs and advance crl_number.)
+     */
+    private static void awaitCrlSettled(Server s) throws InterruptedException {
+        com.vitalsshield.server.pki.CrlService crls = s.bean(com.vitalsshield.server.pki.CrlService.class);
+        long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+        while (System.nanoTime() < deadline) {
+            if (crls.isIdle() && crls.cachedIntermediate().isPresent()) {
+                Thread.sleep(50);
+                if (crls.isIdle()) {
+                    return;
+                }
+            }
+            Thread.sleep(25);
+        }
+        throw new AssertionError("CRL cache did not settle within 10 s");
+    }
+
+    private static X509CRL fetchIntermediateCrl(Server s) throws Exception {
+        try (Connection c = MtlsTestClient.connect(s.ports().pub(), s.root(), null, List.of())) {
+            Response r = c.get("/api/v1/pki/intermediate-crl.pem");
+            assertThat(r.status()).isEqualTo(200);
+            return (X509CRL) CertificateFactory.getInstance("X.509").generateCRL(
+                    new ByteArrayInputStream(r.body().getBytes(StandardCharsets.US_ASCII)));
+        }
+    }
+
+    private static java.math.BigInteger crlNumberOf(X509CRL crl) throws Exception {
+        return org.bouncycastle.asn1.x509.CRLNumber.getInstance(new X509CRLHolder(crl.getEncoded())
+                .getExtension(Extension.cRLNumber).getParsedValue()).getCRLNumber();
+    }
 
     private Connection connect(Leaf leaf) throws IOException {
         return connectTo(server, leaf);

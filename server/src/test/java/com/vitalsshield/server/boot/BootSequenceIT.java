@@ -96,7 +96,7 @@ class BootSequenceIT {
     void stepsRunInOrder() {
         assertThat(capture.steps()).containsExactly(
                 BootStep.RECONCILED, BootStep.GATEWAY_TLS_ISSUED, BootStep.TRUST_ANCHORS_LOADED,
-                BootStep.DENY_LIST_SEEDED, BootStep.LISTENERS_BOUND);
+                BootStep.DENY_LIST_SEEDED, BootStep.CRLS_PUBLISHED, BootStep.LISTENERS_BOUND);
     }
 
     @Test
@@ -110,7 +110,7 @@ class BootSequenceIT {
         assertThat(bootSequence.runBoot()).isEqualTo(ReconcileResult.REBUILT);
         assertThat(capture.steps()).containsExactly(
                 BootStep.RECONCILED, BootStep.GATEWAY_TLS_ISSUED, BootStep.TRUST_ANCHORS_LOADED,
-                BootStep.DENY_LIST_SEEDED, BootStep.LISTENERS_BOUND);
+                BootStep.DENY_LIST_SEEDED, BootStep.CRLS_PUBLISHED, BootStep.LISTENERS_BOUND);
 
         CaIssuer activeServerCa = issuers.requireActive(KeyPurpose.SERVER_TLS_CA);
         assertThat(activeServerCa.issuerKeyHash()).isNotEqualTo(oldServerCa.issuerKeyHash());

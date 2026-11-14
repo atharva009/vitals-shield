@@ -1,6 +1,7 @@
 package com.vitalsshield.server.boot;
 
 import com.vitalsshield.server.gateway.ListenerManager;
+import com.vitalsshield.server.pki.CrlService;
 import com.vitalsshield.server.pki.GatewayTlsMaterial;
 import com.vitalsshield.server.pki.HierarchyReconciler;
 import com.vitalsshield.server.pki.ReconcileResult;
@@ -16,7 +17,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * Ordered startup after context refresh (Flyway has already migrated): reconcile hierarchy, issue gateway TLS
- * material, reload trust anchors, seed the deny-list, and only then bind the listeners. Runs on the boot thread, so the
+ * material, reload trust anchors, seed the deny-list, publish CRLs, and only then bind the listeners. Runs on the boot thread, so the
  * blocking KMS and JDBC calls are allowed here. Disabled with {@code vitalsshield.boot.enabled=false}, in which case
  * nothing binds.
  */
@@ -30,15 +31,18 @@ public class BootSequence implements ApplicationRunner {
     private final GatewayTlsMaterial gatewayTls;
     private final TrustAnchors trustAnchors;
     private final CertificateDenyList denyList;
+    private final CrlService crls;
     private final ListenerManager listeners;
     private final ApplicationEventPublisher events;
 
     public BootSequence(HierarchyReconciler reconciler, GatewayTlsMaterial gatewayTls, TrustAnchors trustAnchors,
-                        CertificateDenyList denyList, ListenerManager listeners, ApplicationEventPublisher events) {
+                        CertificateDenyList denyList, CrlService crls, ListenerManager listeners,
+                        ApplicationEventPublisher events) {
         this.reconciler = reconciler;
         this.gatewayTls = gatewayTls;
         this.trustAnchors = trustAnchors;
         this.denyList = denyList;
+        this.crls = crls;
         this.listeners = listeners;
         this.events = events;
     }
@@ -62,6 +66,11 @@ public class BootSequence implements ApplicationRunner {
         denyList.seedFromDb();
         denyList.startPeriodicRefresh();
         events.publishEvent(new BootStepCompleted(BootStep.DENY_LIST_SEEDED));
+
+        // Sign both CRLs now so the first HTTP GET is served from the cache (DECISIONS.md #27).
+        crls.publishAll();
+        crls.startExpiryWatch();
+        events.publishEvent(new BootStepCompleted(BootStep.CRLS_PUBLISHED));
 
         // Last step, always: ports open only after every check above has passed.
         listeners.bindAll();

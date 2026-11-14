@@ -6,9 +6,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
-/** The CRL Distribution Point URLs already written into certificates. Public port only. */
+/** The CRL Distribution Point URLs already written into certificates. Public port only. Serves the cache; never signs. */
 @RestController
 public class PkiCrlController {
 
@@ -22,15 +21,13 @@ public class PkiCrlController {
 
     @GetMapping("/api/v1/pki/intermediate-crl.pem")
     public Mono<ResponseEntity<String>> intermediateCrl() {
-        return Mono.fromCallable(crls::intermediateCrlPem)
-                .subscribeOn(Schedulers.boundedElastic())
+        return crls.currentIntermediateCrl()
                 .map(pem -> ResponseEntity.ok().contentType(PEM_TEXT).body(pem));
     }
 
     @GetMapping("/api/v1/pki/root-crl.pem")
     public Mono<ResponseEntity<String>> rootCrl() {
-        return Mono.fromCallable(crls::rootCrlPem)
-                .subscribeOn(Schedulers.boundedElastic())
+        return crls.currentRootCrl()
                 .map(pem -> ResponseEntity.ok().contentType(PEM_TEXT).body(pem));
     }
 }

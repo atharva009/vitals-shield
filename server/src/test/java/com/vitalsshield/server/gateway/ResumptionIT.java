@@ -103,7 +103,7 @@ class ResumptionIT {
         } else if ("Reused".equals(second.sessionKind()) || gateDelta > 0) {
             defense = "POST_HANDSHAKE_GATE (session resumed, then closed)";
         } else {
-            defense = "HANDSHAKE_REFUSED (no resumption; full handshake rejected by the trust manager)";
+            defense = "HANDSHAKE (no resumption; full handshake rejected by the trust manager)";
         }
 
         String result = String.format("""
@@ -120,6 +120,12 @@ class ResumptionIT {
         Files.writeString(out.resolve("resumption-second-attempt.txt"), second.output());
         Files.writeString(out.resolve("resumption-baseline-resume.txt"), baseline2.output());
 
+        // Phase 2.1: sessions are invalidated after the handshake check, so nothing can be resumed.
+        assertThat(baseline2.sessionKind()).as("baseline resume attempt:\n%s", baseline2.output()).isEqualTo("New");
+        assertThat(baseline2.got200()).as("baseline full handshake still works").isTrue();
+        assertThat(second.sessionKind()).as("post-revoke attempt must not resume:\n%s", second.output())
+                .isNotEqualTo("Reused");
+        assertThat(defense).startsWith("HANDSHAKE");
         assertThat(second.got200()).as("resumed connection after revoke:\n%s", second.output()).isFalse();
     }
 

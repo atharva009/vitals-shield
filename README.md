@@ -33,9 +33,23 @@ revokes every issued certificate.
 | Task | Runs |
 |---|---|
 | `./gradlew test` | Unit tests only (excludes the `integration`, `e2e`, `drill` tags). Needs no Docker. |
-| `./gradlew integrationTest` | `@Tag("integration")`: KMS smoke tests against the Compose LocalStack, and schema and Flyway-on-startup tests on a Testcontainers postgres:16. |
+| `./gradlew integrationTest` | `@Tag("integration")`: KMS, PKI, and listener tests against the Compose LocalStack, each with a Testcontainers postgres:16 and listeners on free ports. |
 | `./gradlew e2eTest` | `@Tag("e2e")`: end-to-end flows (none yet). |
 | `./gradlew drillTest` | `@Tag("drill")`: failure and recovery drills (none yet). |
+
+To prove the unit tier needs no Docker, point it at a socket that does not exist and leave the Compose stack running:
+
+```sh
+DOCKER_HOST=unix:///nonexistent.sock ./gradlew test --rerun-tasks
+```
+
+Warning: LocalStack keeps no state across restarts. `docker compose stop`, `docker compose down`,
+`docker compose restart localstack`, and `scripts/kms-probe.sh --restart` all wipe every KMS key, and the next server
+boot rebuilds the CA hierarchy and revokes every device certificate.
+
+In IntelliJ, set Settings > Build, Execution, Deployment > Build Tools > Gradle > "Build and run using: Gradle", so the
+IDE and Gradle do not write to the same output directory (the likely cause of a one-off
+`ClassNotFoundException: ReconcileResult`).
 
 ## PKI (Phase 1)
 

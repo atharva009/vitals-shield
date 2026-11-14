@@ -1,6 +1,7 @@
 package com.vitalsshield.server.kms;
 
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLong;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -19,6 +20,7 @@ public class KmsSigner {
     static final int SHA256_LENGTH = 32;
 
     private final KmsClient kms;
+    private final AtomicLong signCount = new AtomicLong();
 
     public KmsSigner(KmsClient kms) {
         this.kms = kms;
@@ -38,12 +40,18 @@ public class KmsSigner {
             throw new IllegalStateException("KMS Sign is blocking and must not run on non-blocking thread "
                     + Thread.currentThread().getName() + "; use signDigest(...)");
         }
+        signCount.incrementAndGet();
         return kms.sign(r -> r.keyId(keyArn)
                         .message(SdkBytes.fromByteArray(sha256Digest))
                         .messageType(MessageType.DIGEST)
                         .signingAlgorithm(SigningAlgorithmSpec.ECDSA_SHA_256))
                 .signature()
                 .asByteArray();
+    }
+
+    /** Number of KMS Sign calls made by this signer (tests and metrics). */
+    public long signCount() {
+        return signCount.get();
     }
 
     /** Reactive variant: the blocking call is shifted onto {@code boundedElastic}. */

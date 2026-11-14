@@ -8,6 +8,7 @@ import io.netty.handler.ssl.SslHandler;
 import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
 import java.util.concurrent.atomic.AtomicLong;
+import javax.net.ssl.SSLSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -43,13 +44,15 @@ public class PostHandshakeGate {
             if (!f.isSuccess()) {
                 return;
             }
+            SSLSession session = ssl.engine().getSession();
             CertKey key;
             try {
-                Certificate[] peer = ssl.engine().getSession().getPeerCertificates();
+                Certificate[] peer = session.getPeerCertificates();
                 key = CertKey.from((X509Certificate) peer[0]);
             } catch (Exception e) {
                 log.info("mTLS session without a usable peer certificate; closing: {}", e.toString());
                 postHandshakeRejects.incrementAndGet();
+                session.invalidate();
                 channel.close();
                 return;
             }
@@ -58,8 +61,13 @@ public class PostHandshakeGate {
                 postHandshakeRejects.incrementAndGet();
                 log.info("Post-handshake gate closed deny-listed session (serial={}, issuer_key_hash={})",
                         key.serial(), key.issuerKeyHash());
+                session.invalidate();
                 channel.close();
+                return;
             }
+            // Accepted: make this session unresumable, so every new connection is a full handshake in which the
+            // trust manager runs and the client proves possession of its key again (DECISIONS.md #26).
+            session.invalidate();
         });
     }
 

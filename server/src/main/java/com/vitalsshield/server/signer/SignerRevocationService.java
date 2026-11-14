@@ -1,5 +1,6 @@
 package com.vitalsshield.server.signer;
 
+import com.vitalsshield.server.pki.CrlService;
 import com.vitalsshield.server.pki.trust.CertKey;
 import com.vitalsshield.server.pki.trust.CertificateDenyList;
 import com.vitalsshield.server.session.ActiveSessionRegistry;
@@ -34,16 +35,19 @@ public class SignerRevocationService {
     private final TransactionTemplate tx;
     private final EvictionProperties eviction;
     private final Clock clock;
+    private final CrlService crls;
     private final Deque<RevocationResult> recent = new ConcurrentLinkedDeque<>();
 
     public SignerRevocationService(CertificateDenyList denyList, ActiveSessionRegistry sessions, JdbcTemplate jdbc,
-                                   TransactionTemplate tx, EvictionProperties eviction, Clock clock) {
+                                   TransactionTemplate tx, EvictionProperties eviction, Clock clock,
+                                   CrlService crls) {
         this.denyList = denyList;
         this.sessions = sessions;
         this.jdbc = jdbc;
         this.tx = tx;
         this.eviction = eviction;
         this.clock = clock;
+        this.crls = crls;
     }
 
     public Mono<RevocationResult> revoke(CertKey key, String reason) {
@@ -69,7 +73,9 @@ public class SignerRevocationService {
                                         key, devices, reason, closed, micros);
                                 return new RevocationResult(key, revokedAt, closed, micros);
                             }))
-                    .doOnNext(this::remember);
+                    .doOnNext(this::remember)
+                    // After eviction, so republishing never adds to eviction latency. Non-blocking, coalesced.
+                    .doOnNext(r -> crls.revocationCommitted(key.issuerKeyHash()));
         });
     }
 

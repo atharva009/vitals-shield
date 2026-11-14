@@ -99,8 +99,8 @@ class PkiOpensslIT {
 
         X509Certificate leaf = issuer.issueDeviceLeaf("dev_wearable_019", localSpki(), Duration.ofHours(12));
         write("device-leaf.pem", Pems.certificate(leaf));
-        write("intermediate-crl.pem", crls.intermediateCrlPem());
-        write("root-crl.pem", crls.rootCrlPem());
+        write("intermediate-crl.pem", crls.publishIntermediateCrl().pem());
+        write("root-crl.pem", crls.publishRootCrl().pem());
     }
 
     @Test
@@ -151,7 +151,7 @@ class PkiOpensslIT {
                 Timestamp.from(leaf.getNotBefore().toInstant()), Timestamp.from(leaf.getNotAfter().toInstant()),
                 Timestamp.from(Instant.now()));
 
-        String crlPem = crls.intermediateCrlPem();
+        String crlPem = crls.publishIntermediateCrl().pem();
         write("intermediate-crl.pem", crlPem);
 
         X509CRLHolder crl = parseCrl(crlPem);
