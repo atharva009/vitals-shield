@@ -28,16 +28,16 @@ spec Section 1 ("Multi-Port Listener Isolation"), Section 2 layer 1 ("Transport 
   `GET /api/v1/admin/boot-status` (8445).
 - **Two new boot steps**: `DENY_LIST_SEEDED`, then `LISTENERS_BOUND` (always last).
 
-Deviations from the spec (the brief calls these plan issues 23 to 25; issue 23 is the no-cache rule; I describe each
-by content because the plan document is not in this repository):
+Deviations from the spec. Numbers refer to [`docs/DECISIONS.md`](../DECISIONS.md), which was created in Phase 2.1;
+the last two rows changed in Phase 2.1 (see section 11):
 
 | Spec says | Code does | Why |
 | :--- | :--- | :--- |
-| `CertStatusResolver` cache entries expire after 5 seconds (Section 4, Revocation Enforcement Path) | No cache at all (plan issue 23) | A 5-second cache means a revoked certificate can still send for up to 5 seconds on a live connection. The DB lookup is one primary-key read |
-| The trust manager rejects any certificate not in an accepted status (Section 4) | The trust manager rejects certificates on an in-memory deny-list; unknown certificates pass the handshake and are stopped per request | The handshake runs on a Netty event loop and must not do JDBC. An allow-list cache cannot know about a certificate issued a millisecond ago; a deny-list can (section 2) |
-| Backstop poller every 3 seconds for `revoked_at`; Redis pub/sub between gateways | 30-second union refresh; single process, no Redis | One gateway process today. Revocations made through `SignerRevocationService` hit the deny-list instantly; the refresh catches revocations made elsewhere (another process, direct SQL), and the per-request check catches them on the next request regardless |
-| Port 8443 "session resumption disabled" (Sections 1, 2) | The JDK still resumes TLS 1.3 sessions (observed, section 9); the post-handshake gate makes resumption harmless for revoked certificates | We could not make the JDK stop resuming with supported settings; the gate is the guarantee |
-| CRL "republished on each revocation" (Section 4) | A new CRL is generated and KMS-signed on every GET | Simplest correct behaviour for now. It is a cost and abuse problem on an unauthenticated port; see section 5 |
+| `CertStatusResolver` cache entries expire after 5 seconds (Section 4, Revocation Enforcement Path) | No cache at all (DECISIONS #23) | A 5-second cache means a revoked certificate can still send for up to 5 seconds on a live connection. The DB lookup is one primary-key read |
+| The trust manager rejects any certificate not in an accepted status (Section 4) | The trust manager rejects certificates on an in-memory deny-list; unknown certificates pass the handshake and are stopped per request (DECISIONS #24) | The handshake runs on a Netty event loop and must not do JDBC. An allow-list cache cannot know about a certificate issued a millisecond ago; a deny-list can (section 2) |
+| Backstop poller every 3 seconds for `revoked_at`; Redis pub/sub between gateways | 30-second union refresh; single process, no Redis (DECISIONS #28, #8, #13) | One gateway process today. Revocations made through `SignerRevocationService` hit the deny-list instantly; the refresh catches revocations made elsewhere (another process, direct SQL), and the per-request check catches them on the next request regardless |
+| Port 8443 "session resumption disabled" (Sections 1, 2) | Phase 2: the JDK still resumed TLS 1.3 sessions and the post-handshake gate was the guarantee. **Phase 2.1: every session is invalidated after the handshake check, so nothing resumes** (DECISIONS #26) | The JDK ticket property alone did not stop cache-based resumption |
+| CRL "republished on each revocation" (Section 4) | Phase 2: a new CRL was signed on every GET. **Phase 2.1: CRLs are cached, republished after a revocation and before nextUpdate; a GET never signs** (DECISIONS #27) | A GET that signs is a cost and abuse problem on an unauthenticated port |
 
 ## 2. Concept primers
 
@@ -341,10 +341,14 @@ Other properties:
   secret from an earlier full handshake, not that it holds the certificate key right now. Spec Section 2 says layer 1
   proves key possession "on every TCP connection"; with the JDK still resuming, that is true for full handshakes only.
   The gate still enforces revocation, and the session lifetime is 1 second.
+  Changed in Phase 2.1: sessions are invalidated after the handshake check, so no connection resumes and every one
+  is a full handshake with CertificateVerify. The claim now holds (section 11, DECISIONS #26).
 - **Revocation from another process within 30 seconds, at handshake time.** The new connection completes the
   handshake (deny-list not yet refreshed) but the per-request check returns 403 REVOKED. No request is served.
 - **CRL endpoint abuse.** Every GET of a CRL increments the CRL number and makes a KMS Sign call, on an unauthenticated
   port. A caching or rate-limit layer is needed before this is exposed beyond localhost.
+  Changed in Phase 2.1: GETs are served from a cache and never sign (section 11, DECISIONS #27). Rate limiting is
+  still absent, but a GET now costs only a memory read and a TLS handshake.
 - **Gateway TLS key in memory**, as in Phase 1.
 
 ## 6. Design decisions
@@ -353,9 +357,9 @@ Other properties:
 | :--- | :--- | :--- |
 | **Deny-list in the handshake path** | Allow-list cache; DB query in the trust manager | Allow-list rejects certificates issued since the last refresh. A DB query blocks the event loop |
 | **Deny before commit** | Write the DB first, then update memory | If the DB write fails after the deny-list update, the process still refuses the certificate (fail closed). The other order fails open |
-| **No per-request cache** (plan issue 23) | 5-second cache, as the spec says | A cache makes revocation lag on live connections. One indexed primary-key read per request is cheap at our scale. `dbStatusChangeVisibleToNextRequestOnSameConnection` proves no caching |
-| **Loopback binding by default; admin always loopback** | Bind 0.0.0.0 | Nothing in this phase needs remote access. The admin plane has no authentication yet, so it must never be reachable from outside |
-| **JDK `SslProvider`** | OpenSSL via netty-tcnative | One TLS implementation; our `X509ExtendedTrustManager` is called exactly as JSSE documents; no native library. The cost is the JDK's resumption behaviour (section 9) |
+| **No per-request cache** (DECISIONS #23) | 5-second cache, as the spec says | A cache makes revocation lag on live connections. One indexed primary-key read per request is cheap at our scale. `dbStatusChangeVisibleToNextRequestOnSameConnection` proves no caching |
+| **Loopback binding by default; admin always loopback** (DECISIONS #25) | Bind 0.0.0.0 | Nothing in this phase needs remote access. The admin plane has no authentication yet, so it must never be reachable from outside |
+| **JDK `SslProvider`** | OpenSSL via netty-tcnative | One TLS implementation; our `X509ExtendedTrustManager` is called exactly as JSSE documents; no native library. The cost was the JDK's resumption behaviour (section 9), fixed in Phase 2.1 with session invalidation (DECISIONS #26) |
 | **TLS 1.3 only** | Also allow TLS 1.2 | TLS 1.3 encrypts the client certificate in the handshake (TLS 1.2 sends it in clear), removes renegotiation, and has one handshake shape. All our clients are ours |
 | **One shared HttpHandler for three servers** | One Spring context or handler per port | One set of controllers and filters; port separation is enforced in one place (`PortEnforcementWebFilter`) that is unit-tested for every route on every port |
 | **404 on the wrong port** | 403 | 403 confirms the route exists |
@@ -498,7 +502,8 @@ $ curl -s -o /dev/null -w "%{http_code}\n" --cacert var/trust/root-ca.pem https:
 404
 ```
 
-mTLS port without a client certificate, exactly as the criterion is written. Note it shows no failure:
+mTLS port without a client certificate. Changed in Phase 2.1: use the `sleep 1 |` form below; the `</dev/null` form
+the Phase 2 criterion used shows no failure:
 
 ```
 $ $OPENSSL s_client -connect 127.0.0.1:8443 -servername localhost -CAfile var/trust/root-ca.pem </dev/null 2>&1 | tail -5
@@ -599,10 +604,12 @@ process stopped by SIGINT.
 ## 10. Judge Q&A
 
 **Q: TLS session resumption skips certificate validation. How do you stop a revoked device from resuming?**
-A: The post-handshake gate. After every handshake, full or resumed, it reads the peer certificate from the SSLSession
-and checks the in-memory deny-list; if denied, it closes the channel before any HTTP is read. We observed the JDK
-resuming even with stateless tickets disabled, and `ResumptionIT` shows the resumed post-revoke session closed by the
-gate with no HTTP response. The per-request DB check behind it would return 403 anyway.
+A: We make resumption impossible. After the handshake check, the post-handshake gate calls `invalidate()` on the
+server's SSLSession, so the ticket the JDK still sends cannot be redeemed: the next connection is a full handshake,
+the trust manager runs, and the client proves key possession again. `ResumptionIT` shows a resume attempt getting
+"New" (never "Reused"), and after a revoke that full handshake is refused with alert 46. The gate's deny-list check
+stays as a second layer, and the per-request DB check would return 403 behind that. (In Phase 2, before
+invalidation, the JDK did resume and the gate closed the resumed session.)
 
 **Q: Why not check certificate status in the trust manager?**
 A: The trust manager runs on a Netty event loop during the handshake; a JDBC call there would stall every connection on
@@ -626,4 +633,145 @@ name. The PKIX signature check would also reject such a leaf; the AKI check give
 A: The CRLs are now served at the URLs in the certificates' CRL Distribution Points (8444) and verify against the
 issuer found by AKI. They are the published record for third parties. Our own enforcement does not wait for CRLs: the
 handshake deny-list, the post-handshake gate, the per-request DB check, and socket eviction act within milliseconds.
-One open issue: every CRL GET currently re-signs through KMS, so the endpoint needs caching before wider exposure.
+GETs are served from an in-memory cache and never sign; a revocation republishes the covering CRL in the background
+within milliseconds, bursts are coalesced, and a CRL is re-signed before its nextUpdate (DECISIONS #27).
+
+## 11. Changed in Phase 2.1
+
+Commit `a16ec1d` (fix(gateway): invalidate tls sessions after handshake check; cache and republish crls).
+
+### Session invalidation: resumption is now impossible (DECISIONS #26)
+
+**What `invalidate()` does.** `SSLSession.invalidate()` marks the server's session as no longer joinable and removes it
+from the JDK's server session cache. A TLS 1.3 resumption is a lookup in that cache (the 32-byte ticket the JDK sends
+is an ID pointing into it). With the session invalidated, the lookup fails, the server ignores the client's
+pre-shared key, and it falls back to a full handshake: it sends its certificate, asks for the client's, and runs the
+trust manager.
+
+**Where.** `PostHandshakeGate`, in the `handshakeFuture()` listener: after registering an accepted channel, and before
+closing a rejected one. The deny-list check in the gate is unchanged; it is now defense in depth.
+
+**What ResumptionIT shows now** (real output):
+
+```
+RESUMPTION_BASELINE first=New tickets=1 http=200 | resume=New tickets=1 http=200
+RESUMPTION_AFTER_REVOKE first=New tickets=1 http=200 | resume=New http=null postHandshakeRejectsDelta=0
+RESUMPTION_RESULT defense=HANDSHAKE (no resumption; full handshake rejected by the trust manager)
+```
+
+Compare Phase 2: `resume=Reused` in both lines and `defense=POST_HANDSHAKE_GATE`. Now:
+
+- The server still sends one NewSessionTicket per connection (`tickets=1`). The client presents it, and the server
+  does a full handshake anyway ("New").
+- After revoke, the full handshake is refused by the trust manager, and the gate never sees it
+  (`postHandshakeRejectsDelta=0`). The client's error, from `build/mtls-out/resumption-second-attempt.txt`:
+
+```
+New, TLSv1.3, Cipher is TLS_AES_128_GCM_SHA256
+807F3B0202000000:error:0A000416:SSL routines:ssl3_read_bytes:ssl/tls alert certificate unknown:ssl/record/rec_layer_s3.c:918:SSL alert number 46
+```
+
+**Does spec Section 2 layer 1 now hold?** Yes, for the mTLS port. Every connection is a full TLS 1.3 handshake, and
+every full handshake includes the client's CertificateVerify, a signature made with the leaf's private key over the
+handshake transcript. So every TCP connection proves the device holds its key, and every connection is checked by the
+trust manager against the current hierarchy and deny-list. The cost is a full handshake (one ECDSA signature and
+verification on each side) per connection, which is small next to a keep-alive session's lifetime.
+
+### CRLs cached and republished (DECISIONS #27)
+
+**Why a GET must never sign.** A CRL GET on 8444 is unauthenticated. If each GET signs, then anyone who can reach the
+port can make the server call KMS Sign as often as they like (cost, KMS rate limits, a slower path for real signing)
+and push the CRL Number up without any revocation happening. Signing should happen when the content changes, not when
+someone reads it.
+
+**How it works** (`CrlService`):
+
+- Each CRL (intermediate, root) has a slot holding the latest signed PEM, its issuer key hash, its CRL Number, and its
+  nextUpdate.
+- A GET returns the cached PEM. Only if nothing is cached yet does it generate, and concurrent first GETs share one
+  generation (a single cached Mono). In practice boot has already published both.
+- Regeneration is triggered by (a) `SignerRevocationService` after a revoke commits and its sockets are evicted (so
+  eviction latency is unaffected), for the CRL whose issuer key hash matches the revoked certificate's, and (b) a
+  10-minute check that republishes when nextUpdate is less than 12 hours away (intermediate) or 90 days away (root).
+- **Request coalescing**: a `running` flag allows one generation at a time per CRL; a `pending` flag records "asked
+  again while running", which causes exactly one more run. Ten concurrent revocations produced 2 new CRLs, not 10.
+- While a new CRL is being signed, GETs keep serving the previous one.
+- New boot step `CRLS_PUBLISHED` (between `DENY_LIST_SEEDED` and `LISTENERS_BOUND`) signs both before any port opens
+  (DECISIONS #16).
+
+**Real output, with `bootRun` running.** `crl_number` is the next number to use, so 2 means CRL 1 was published at boot.
+Look for the Device Intermediate's value unchanged after 20 GETs:
+
+```
+$ psql -c "select subject_dn, crl_number, status from ca_issuers where status='ACTIVE'"   (before)
+                   subject_dn                    | crl_number | status
+-------------------------------------------------+------------+--------
+ CN=VitalsShield Issuing CA G1,O=VitalsShield    |          2 | ACTIVE
+ CN=VitalsShield Root CA,O=VitalsShield          |          2 | ACTIVE
+ CN=VitalsShield Server TLS CA G1,O=VitalsShield |          1 | ACTIVE
+(3 rows)
+
+$ for i in $(seq 1 20); do curl -s --cacert var/trust/root-ca.pem https://localhost:8444/api/v1/pki/intermediate-crl.pem > /dev/null; done
+$ psql -c "select subject_dn, crl_number, status from ca_issuers where status='ACTIVE'"   (after)
+                   subject_dn                    | crl_number | status
+-------------------------------------------------+------------+--------
+ CN=VitalsShield Issuing CA G1,O=VitalsShield    |          2 | ACTIVE
+ CN=VitalsShield Root CA,O=VitalsShield          |          2 | ACTIVE
+ CN=VitalsShield Server TLS CA G1,O=VitalsShield |          1 | ACTIVE
+(3 rows)
+
+$ curl -s http://127.0.0.1:8445/api/v1/admin/boot-status
+{"steps":[{"completed_at":"2026-11-14T00:06:03.168846Z","step":"RECONCILED"},{"completed_at":"2026-11-14T00:06:03.181209Z","step":"GATEWAY_TLS_ISSUED"},{"completed_at":"2026-11-14T00:06:03.183145Z","step":"TRUST_ANCHORS_LOADED"},{"completed_at":"2026-11-14T00:06:03.188876Z","step":"DENY_LIST_SEEDED"},{"completed_at":"2026-11-14T00:06:03.214580Z","step":"CRLS_PUBLISHED"},{"completed_at":"2026-11-14T00:06:03.499879Z","step":"LISTENERS_BOUND"}]}
+```
+
+The tests: `crlGetsDoNotSign` (100 concurrent GETs: KMS sign count and `crl_number` unchanged, one distinct body),
+`crlRepublishedOnRevoke` (the serial is listed within 2 s, CRL Number exactly one higher), and `crlBurstCoalesced` (10
+concurrent revokes, all listed; this run printed `CRL_BURST crl_number rose by 2 for 10 concurrent revocations`).
+Eviction latency is unaffected: this run's five measurements were 3127, 1341, 2402, 1697 and 4706 µs (max 4,706).
+
+### The no-client-cert check, done properly
+
+The TLS 1.3 client finishes its handshake before the server judges its certificate, so the server's
+`certificate_required` alert (number 116, new in TLS 1.3) arrives after the client thinks it is connected. Keep stdin
+open so s_client stays to read it. Real output from the Phase 2.1 `bootRun`:
+
+```
+$ sleep 1 | $OPENSSL s_client -connect 127.0.0.1:8443 -servername localhost -CAfile var/trust/root-ca.pem 2>&1 | grep -iE "alert|Verify return code"
+Verify return code: 0 (ok)
+807F3B0202000000:error:0A00045C:SSL routines:ssl3_read_bytes:tlsv13 alert certificate required:ssl/record/rec_layer_s3.c:918:SSL alert number 116
+```
+
+"Verify return code: 0 (ok)" is the client's verdict on the *server's* certificate. The second line is the server
+refusing the client.
+
+### Unit tests without wiping KMS keys
+
+`docker compose stop` restarts LocalStack and deletes every KMS key, so the next boot rebuilds the hierarchy. The unit
+tier is now proven Docker-free with an unreachable Docker socket instead, leaving the stack running. Real output:
+
+```
+before: localstack StartedAt=2026-11-13T23:51:39.815052583Z
+$ DOCKER_HOST=unix:///nonexistent.sock ./gradlew test --rerun-tasks
+   1 BUILD SUCCESSFUL in 4s
+   5 CanonicalBytesTest PASSED
+  13 CanonicalEncodingsTest PASSED
+   7 CertificateDenyListTest PASSED
+   9 CertificateProfileTest PASSED
+  14 CrlReasonMappingTest PASSED
+  12 DynamicMtlsTrustManagerTest PASSED
+   2 NoNettyNioClientTest PASSED
+  18 PortEnforcementWebFilterTest PASSED
+after:  localstack StartedAt=2026-11-13T23:51:39.815052583Z
+UNCHANGED
+```
+
+### Gotcha hit in Phase 2.1
+
+- **CRL Numbers are shared across processes; caches are not.** `MtlsListenerIT` starts extra servers against the same
+  database (for example the eviction-disabled one). Each publishes CRLs at boot and on its own revocations, advancing
+  `ca_issuers.crl_number`, while the main server's cache still holds its own last CRL. The first test version waited
+  for "cached number == crl_number - 1" and timed out, and then expected "exactly one higher than my cached CRL" and
+  got 10 instead of 8. The cache was right; the tests were wrong. They now wait for "no regeneration running or
+  pending" (`CrlService.isIdle()`) and compare against the newest number issued by anyone (`crl_number - 1`). The
+  same will be true with several gateways in production: each serves its own latest CRL, and CRL Numbers stay
+  monotonic because the database assigns them.

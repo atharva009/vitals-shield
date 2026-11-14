@@ -52,6 +52,8 @@ used and for how long. Anyone with the issuer's public key can check the signatu
 certificate is signed by the next one. Our device chain is device leaf, Device Issuing Intermediate, Root. A verifier
 checks each link.
 
+**certificate_required alert** (Phase 2.1): TLS 1.3 alert number 116, sent by a server that asked for a client certificate and got none. Because the client has already finished its side of the handshake, it only sees this alert on its next read; `openssl s_client </dev/null` exits before that and looks successful.
+
 **CertificateRequest** (Phase 2): The TLS handshake message in which the server asks the client for a certificate. It can list the CA names the server accepts; ours lists only the current Device Intermediate (`getAcceptedIssuers`). It is sent only on the mTLS port.
 
 **Channel** (Phase 2): Netty's object for one open network connection. Closing it sends a TLS close and ends the TCP connection, even if the client is idle on keep-alive. `ActiveSessionRegistry` keeps the channels per certificate so a revoke can close them.
@@ -75,6 +77,8 @@ is not served yet; HTTP endpoints come in a later phase.
 **CRL Number** (Phase 1): A CRL extension holding a number that increases with each CRL the issuer publishes. It
 lets a relying party tell which of two CRLs is newer. We keep it in `ca_issuers.crl_number` and increment it in the
 same transaction that reads the revoked entries.
+
+**CRL republication** (Phase 2.1): Signing a new CRL when its contents change or before it goes stale, and serving the cached copy in between. Since Phase 2.1 our CRLs are republished after a revocation commits and before nextUpdate, and an HTTP GET never signs (DECISIONS #27).
 
 **Deny-list** (Phase 2): A set of things that are refused; anything not listed passes this check. `CertificateDenyList` holds revoked, expired, and superseded certificates in memory, keyed by issuer key hash and serial. A new certificate is not on it, so it connects immediately; the per-request DB check confirms its real status.
 
@@ -198,6 +202,8 @@ PKIX.
 
 **PSK (pre-shared key)** (Phase 2): In TLS 1.3 resumption, a secret from an earlier session that the client and server both hold. The client proves it knows the PSK instead of sending a certificate, which is why resumption skips certificate checks.
 
+**PSK resumption** (Phase 2.1): TLS 1.3's way of resuming: the client sends a pre-shared key identity from an earlier session's ticket instead of a certificate, and both sides derive keys from it. No certificate is sent and no trust manager runs. After Phase 2.1 our server refuses every PSK because the session behind it was invalidated.
+
 **-purpose** (Phase 1): An `openssl verify` option that names the use you want to check a certificate for, such as
 `sslclient` (TLS client) or `sslserver` (TLS server). OpenSSL then checks Key Usage and Extended Key Usage on the leaf
 and on every CA in the chain. Our device leaf passes `sslclient` and fails `sslserver` with "unsuitable certificate
@@ -215,6 +221,8 @@ sequence of RDNs. The order of that sequence in DER is what OpenSSL prints.
 **Reconciliation** (Phase 1): Comparing recorded state with actual state and fixing the difference. At startup
 `HierarchyReconciler` compares `kms_keys` with what KMS reports, and either does nothing, rebuilds (local profile), or
 refuses to start.
+
+**Request coalescing** (Phase 2.1): Merging many requests for the same expensive work into as few runs as possible. `CrlService` allows one CRL generation in flight; requests that arrive meanwhile set a flag that causes exactly one more run, so 10 concurrent revocations produced 2 new CRLs.
 
 **Root CA** (Phase 1): The top CA in a hierarchy. Its certificate is self-signed and trusted because it was
 distributed out of band, not because of a signature. Ours is "CN=VitalsShield Root CA, O=VitalsShield", valid 10
@@ -238,6 +246,8 @@ had the key.
 **Serial number** (Phase 1): A number, unique per issuer, that identifies a certificate. CRLs list revoked
 certificates by serial. Ours are 20 random bytes with the top bit cleared, stored as lowercase hex without leading
 zeros.
+
+**Session invalidation** (Phase 2.1): Marking a TLS session as unusable for future connections with `SSLSession.invalidate()`, which also removes it from the JDK server's session cache. Our post-handshake gate does it after every handshake check, so a client can never resume and must do a full handshake each time (DECISIONS #26).
 
 **Session resumption** (Phase 2): Starting a new TLS connection from a previous session's secrets instead of a full handshake. It is faster but skips certificate validation, so a revoked client could get back in; the post-handshake gate closes that gap.
 
