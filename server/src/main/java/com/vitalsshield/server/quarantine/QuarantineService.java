@@ -91,11 +91,13 @@ public class QuarantineService {
                    (SELECT count(*) FROM retracted_alerts)    AS alerts_retracted
             """;
 
-    public record Result(String deviceId, int certsRevoked, int channelsClosed, long revocationLatencyMicros,
-                         long batchesQuarantined, long baselinesReset, long alertsRetracted) {
+    public record Result(String deviceId, Instant at, int certsRevoked, int channelsClosed,
+                         long revocationLatencyMicros, long batchesQuarantined, long baselinesReset,
+                         long alertsRetracted) {
         public Map<String, Object> toJson() {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("device_id", deviceId);
+            m.put("at", at.toString());
             m.put("certs_revoked", certsRevoked);
             m.put("channels_closed", channelsClosed);
             m.put("revocation_latency_micros", revocationLatencyMicros);
@@ -140,10 +142,11 @@ public class QuarantineService {
         long t0 = System.nanoTime();
         return Mono.fromCallable(() -> requireQuarantinable(deviceId))
                 .subscribeOn(Schedulers.boundedElastic())
-                .then(revocations.revokeAllForDevice(deviceId, "KEY_COMPROMISE"))
+                .then(revocations.revokeAllForDevice(deviceId, "KEY_COMPROMISE", t0))
                 .flatMap(bulk -> {
-                    // DECISIONS #11: t0 (request receipt) to every close future complete.
-                    long latencyMicros = (System.nanoTime() - t0) / 1000;
+                    // DECISIONS #11: t0 (request receipt) to every close future complete, measured once inside the
+                    // bulk revocation so the revocation log and this response report the same number.
+                    long latencyMicros = bulk.latencyMicros();
                     return Mono.fromCallable(() -> sanitize(deviceId, lookbackMinutes, reason, bulk, latencyMicros))
                             .subscribeOn(Schedulers.boundedElastic());
                 })
@@ -208,7 +211,7 @@ public class QuarantineService {
                             java.sql.Types.TIMESTAMP_WITH_TIMEZONE,
                             java.time.OffsetDateTime.ofInstant(quarantineTs, java.time.ZoneOffset.UTC)))
                     .addValue("lookbackMinutes", lookbackMinutes));
-            return new Result(deviceId, bulk.keys().size(), bulk.channelsClosed(), latencyMicros,
+            return new Result(deviceId, quarantineTs, bulk.keys().size(), bulk.channelsClosed(), latencyMicros,
                     ((Number) counts.get("batches_quarantined")).longValue(),
                     ((Number) counts.get("baselines_reset")).longValue(),
                     ((Number) counts.get("alerts_retracted")).longValue());

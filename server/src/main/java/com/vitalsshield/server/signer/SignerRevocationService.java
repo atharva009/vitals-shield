@@ -71,7 +71,8 @@ public class SignerRevocationService {
                                 long micros = (System.nanoTime() - t0) / 1000;
                                 log.info("Revoked {} (devices {}, reason {}): closed {} live socket(s) in {} us",
                                         key, devices, reason, closed, micros);
-                                return new RevocationResult(key, revokedAt, closed, micros);
+                                return new RevocationResult(key, devices.isEmpty() ? null : devices.get(0), reason,
+                                        revokedAt, closed, micros);
                             }))
                     .doOnNext(this::remember)
                     // After eviction, so republishing never adds to eviction latency. Non-blocking, coalesced.
@@ -80,7 +81,7 @@ public class SignerRevocationService {
     }
 
     /** Result of revoking every live certificate of a device. */
-    public record BulkRevocation(String deviceId, List<CertKey> keys, int channelsClosed) {
+    public record BulkRevocation(String deviceId, List<CertKey> keys, int channelsClosed, long latencyMicros) {
     }
 
     /**
@@ -89,12 +90,22 @@ public class SignerRevocationService {
      * returned Mono completes when all close futures have. CRL republication is triggered after.
      */
     public Mono<BulkRevocation> revokeAllForDevice(String deviceId, String reason) {
+        return revokeAllForDevice(deviceId, reason, System.nanoTime());
+    }
+
+    /**
+     * As above; {@code t0Nanos} is when the caller (quarantine) received its request, so the per-certificate latency
+     * recorded in the revocation log matches the latency the caller reports (DECISIONS #11).
+     */
+    public Mono<BulkRevocation> revokeAllForDevice(String deviceId, String reason, long t0Nanos) {
+        Instant[] revokedAtHolder = new Instant[1];
         return Mono.fromCallable(() -> {
                     List<CertKey> keys = jdbc.query("""
                             SELECT issuer_key_hash, serial_number FROM certificates
                              WHERE device_id = ? AND status IN ('ACTIVE', 'ISSUED_PENDING_USE', 'RENEWED')
                             """, (rs, i) -> CertKey.of(rs.getString(1), rs.getString(2)), deviceId);
                     Instant revokedAt = clock.instant();
+                    revokedAtHolder[0] = revokedAt;
                     keys.forEach(k -> denyList.add(k, revokedAt, "REVOKED")); // before the DB write: fail closed
                     tx.executeWithoutResult(status -> jdbc.update("""
                             UPDATE certificates
@@ -104,12 +115,20 @@ public class SignerRevocationService {
                     return keys;
                 })
                 .subscribeOn(Schedulers.boundedElastic())
-                .flatMap(keys -> (eviction.enabled()
-                        ? reactor.core.publisher.Flux.fromIterable(keys)
-                                .flatMap(sessions::evictByCert)
-                                .reduce(0, Integer::sum)
-                        : Mono.just(0))
-                        .map(closed -> new BulkRevocation(deviceId, keys, closed)))
+                .flatMap(keys -> reactor.core.publisher.Flux.fromIterable(keys)
+                        .flatMap(k -> (eviction.enabled() ? sessions.evictByCert(k) : Mono.just(0))
+                                .map(closed -> java.util.Map.entry(k, closed)))
+                        .collectList()
+                        .map(perKey -> {
+                            long micros = (System.nanoTime() - t0Nanos) / 1000;
+                            int total = 0;
+                            for (var e : perKey) {
+                                total += e.getValue();
+                                remember(new RevocationResult(e.getKey(), deviceId, reason, revokedAtHolder[0],
+                                        e.getValue(), micros));
+                            }
+                            return new BulkRevocation(deviceId, keys, total, micros);
+                        }))
                 .doOnNext(r -> r.keys().stream().map(CertKey::issuerKeyHash).distinct()
                         .forEach(crls::revocationCommitted));
     }

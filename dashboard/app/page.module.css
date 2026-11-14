@@ -1,0 +1,94 @@
+.page { min-height: 100vh; padding-bottom: 48px; }
+
+.header {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 14px 24px; background: color-mix(in srgb, var(--bg) 92%, transparent);
+  border-bottom: 1px solid var(--border); backdrop-filter: blur(6px);
+}
+.brand { font-weight: 700; font-size: 20px; letter-spacing: 0.2px; }
+.spacer { flex: 1; }
+.clock { font-variant-numeric: tabular-nums; color: var(--muted); }
+.toggle { display: flex; align-items: center; gap: 6px; color: var(--muted); cursor: pointer; }
+
+.pill { padding: 4px 12px; border-radius: 999px; font-size: 14px; font-weight: 600; border: 1px solid transparent; }
+.pillOk { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
+.pillWarn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
+.pillDanger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 60%, transparent); }
+.pillMuted { color: var(--muted); border-color: var(--border); }
+
+.banner {
+  margin: 16px 24px 0; padding: 14px 18px; border-radius: 10px;
+  background: color-mix(in srgb, var(--danger) 22%, var(--panel)); border: 1px solid var(--danger);
+  color: #fff; font-weight: 700; font-size: 18px;
+}
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; padding: 18px 24px 0; }
+.tile { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; min-height: 118px; }
+.tileDanger { border-color: var(--danger); }
+.tileLabel { color: var(--muted); font-size: 14px; text-transform: uppercase; letter-spacing: 0.6px; }
+.tileValue { display: inline-block; margin-top: 6px; font-size: 36px; font-weight: 700; font-variant-numeric: tabular-nums; border-radius: 6px; padding: 0 4px; }
+.tileSub { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+
+.panel { margin: 18px 24px 0; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 20px; }
+.panel h2 { margin: 0 0 12px; font-size: 18px; }
+
+.chain { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.caCard { background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.caLabel { font-weight: 700; color: var(--accent); }
+.caSubject { margin: 4px 0; word-break: break-word; }
+.chainNote { margin-top: 10px; color: var(--muted); font-size: 14px; }
+.crlLine { margin-top: 8px; font-variant-numeric: tabular-nums; }
+
+.table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.table th { text-align: left; color: var(--muted); font-weight: 600; font-size: 14px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.table td { padding: 9px 10px; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); vertical-align: middle; }
+.num { text-align: right !important; }
+.row { cursor: pointer; transition: background 200ms; }
+.row:hover { background: var(--panel-2); }
+.rowSelected { cursor: pointer; background: color-mix(in srgb, var(--accent) 14%, var(--panel)); }
+.rowQuarantined td { opacity: 0.45; text-decoration: line-through; }
+
+.mono { font-family: var(--mono); font-size: 15px; word-break: break-all; }
+.muted { color: var(--muted); }
+.okText { color: var(--ok); font-weight: 700; font-size: 20px; }
+.dangerText { color: var(--danger); font-weight: 700; font-size: 20px; }
+.certMeta { font-family: inherit; }
+
+.chip { display: inline-block; padding: 2px 9px; border-radius: 6px; font-size: 13px; font-weight: 700; letter-spacing: 0.3px; }
+.chipOk { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
+.chipWarn { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
+.chipDanger { background: color-mix(in srgb, var(--danger) 22%, transparent); color: var(--danger); }
+.chipMuted { background: var(--panel-2); color: var(--muted); }
+.badge { margin-left: 6px; padding: 2px 7px; border-radius: 5px; font-size: 11px; font-weight: 800; letter-spacing: 0.6px; color: #111; background: var(--warn); vertical-align: middle; }
+
+.deviceHead { display: flex; align-items: center; justify-content: space-between; }
+.certGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.sparkRow { display: flex; align-items: center; gap: 14px; margin: 8px 0; color: var(--accent); }
+.spark { width: 240px; height: 48px; }
+.result { margin: 12px 0; padding: 14px 16px; border-radius: 10px; border: 1px solid var(--danger); background: color-mix(in srgb, var(--danger) 12%, var(--panel)); }
+.resultBig { font-size: 40px; font-weight: 800; font-variant-numeric: tabular-nums; }
+
+.primary, .danger, .ghost { border-radius: 8px; padding: 9px 16px; font-weight: 700; cursor: pointer; border: 1px solid transparent; }
+.primary { background: var(--accent); color: #04121c; }
+.danger { background: var(--danger); color: #fff; }
+.danger:disabled { opacity: 0.4; cursor: not-allowed; }
+.ghost { background: transparent; color: var(--text); border-color: var(--border); }
+.input { width: 100%; padding: 10px 12px; margin: 6px 0 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); }
+.error { color: var(--danger); font-weight: 600; }
+.hint { color: var(--muted); margin-top: -4px; }
+
+.signin { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+.signinCard { width: min(440px, 100%); background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 28px; }
+.signinCard h1 { margin-top: 0; font-size: 24px; }
+
+.modalBack { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6); display: grid; place-items: center; z-index: 20; }
+.modal { width: min(480px, 92vw); background: var(--panel); border: 1px solid var(--danger); border-radius: 14px; padding: 22px; }
+.modal h2 { margin-top: 0; }
+.modalActions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }
+
+.flash { animation: flash 600ms ease-out; }
+@keyframes flash {
+  from { background-color: var(--flash); }
+  to { background-color: transparent; }
+}

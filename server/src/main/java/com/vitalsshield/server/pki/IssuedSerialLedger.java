@@ -84,6 +84,28 @@ public class IssuedSerialLedger {
         return jdbc.update("UPDATE issued_serials SET status = 'VOIDED', voided_at = NOW() WHERE status = 'RESERVED'");
     }
 
+    /** DECISIONS #38 invariant: certificates rows without a ledger row, or whose ledger row is still RESERVED. */
+    public static final String INVARIANT_SQL = """
+            SELECT count(*) FROM certificates c
+              LEFT JOIN issued_serials s USING (issuer_key_hash, serial_number)
+             WHERE s.serial_number IS NULL OR s.status = 'RESERVED'
+            """;
+
+    public int invariantViolations() {
+        return jdbc.queryForObject(INVARIANT_SQL, Integer.class);
+    }
+
+    /** Ledger row counts by status. */
+    public java.util.Map<String, Long> countsByStatus() {
+        java.util.Map<String, Long> out = new java.util.TreeMap<>(java.util.Map.of("RECORDED", 0L, "VOIDED", 0L,
+                "RESERVED", 0L));
+        jdbc.query("SELECT status::text, count(*) FROM issued_serials GROUP BY 1",
+                rs -> {
+                    out.put(rs.getString(1), rs.getLong(2));
+                });
+        return out;
+    }
+
     /** Pure helper for the sweep rule, so the boundary can be unit-tested: stale iff reservedAt < now - 2 min. */
     public static boolean isStale(Instant reservedAt, Instant now) {
         return reservedAt.isBefore(now.minus(STALE_AFTER));

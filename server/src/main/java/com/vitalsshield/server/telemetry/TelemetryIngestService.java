@@ -98,6 +98,7 @@ public class TelemetryIngestService {
         // 2. Certificate binding: TLS leaf thumbprint == stored thumbprint (== header x5t#S256, checked in step 3).
         String tlsThumb = TelemetryJws.thumbprint(der(tlsLeaf));
         if (!tlsThumb.equals(cert.certThumbprintS256())) {
+            metrics.increment("jws_rejected.CERT_MISMATCH");
             throw IngestRejection.of(401, "JWS_CERT_MISMATCH");
         }
         // 3. Verify with the TLS leaf's key; never a key from the JWS.

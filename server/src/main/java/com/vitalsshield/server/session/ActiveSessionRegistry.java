@@ -28,6 +28,17 @@ public class ActiveSessionRegistry {
         return channels.values().stream().mapToInt(Set::size).sum();
     }
 
+    /** Live socket count per certificate (for the dashboard). */
+    public Map<CertKey, Integer> liveCountsByKey() {
+        Map<CertKey, Integer> out = new java.util.HashMap<>();
+        channels.forEach((k, set) -> {
+            if (!set.isEmpty()) {
+                out.put(k, set.size());
+            }
+        });
+        return out;
+    }
+
     public Set<Channel> liveSocketsFor(CertKey key) {
         Set<Channel> set = channels.get(key);
         return set == null ? Set.of() : Set.copyOf(set);

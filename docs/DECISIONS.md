@@ -51,3 +51,9 @@ reports cite these by number ("DECISIONS #23").
 | 44 | §5, §8 | Simulator offline handling is simplified: it retries the same frame (same batch_id and sequence number) until it succeeds. The flash ring buffer stays "Designed". |
 | 45 | §4 | Quarantine also revokes the device's outstanding ISSUED and CLAIMING bootstrap tokens. |
 | 46 | §6 | Phase 4 classifies telemetry by plausibility bounds and perfusion only (REJECTED_IMPLAUSIBLE, SIGNAL_DEGRADED, ACCEPTED). Activity context, acute thresholds, calibration, drift, and alerts arrive in Phase 7. |
+| 47 | §8 | Dashboard: Next.js static export served on the admin port from a filesystem directory (vitalsshield.dashboard.dir, default dashboard/out). The operator pastes the admin setup code at sign-in; it is held in sessionStorage until Phase 6 adds WebAuthn. |
+| 48 | §8 | The dashboard polls every 500 ms instead of using SSE: EventSource cannot send an Authorization header. |
+| 49 | §3 | KMS health monitor: DescribeKey on the four ACTIVE keys every 30 s. It reports and alarms but never rebuilds at runtime; recovery means restarting the server, which rebuilds and revokes every device. |
+| 50 | §8 | Serials are displayed as uppercase whole-byte hex, the way `openssl x509 -serial` and `openssl crl -text` print them. The stored format is unchanged. |
+| 51 | §8 | Devices and tokens created by the dev seed tool show a visible DEV SEED badge on the dashboard. |
+| 52 | §8 | The Next.js 16 static export contains inline scripts (3 in index.html, including the `_R_` hydration bootstrap), so `script-src 'self'` alone breaks it. Instead of `'unsafe-inline'`, the dashboard handler adds the SHA-256 hash of every inline script in the served HTML file to `script-src` (computed at serve time, cached per file and modification time). External scripts are still `'self'` only. |

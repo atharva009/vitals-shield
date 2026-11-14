@@ -81,7 +81,7 @@ public class CrlService {
     }
 
     /** A signed CRL as published: PEM plus what the cache needs to order and refresh it. */
-    public record SignedCrl(String pem, String issuerKeyHash, long crlNumber, Instant nextUpdate) {
+    public record SignedCrl(String pem, String issuerKeyHash, long crlNumber, Instant nextUpdate, int entryCount) {
     }
 
     // ---- serving (never signs once something is cached) ----------------------------------------------------------
@@ -283,7 +283,7 @@ public class CrlService {
             new JcaX509CRLConverter().getCRL(crl).verify(caCert.getPublicKey());
             log.info("Generated {} CRL number {} with {} entries", purpose, snap.crlNumber(), snap.entries().size());
             return new SignedCrl(Pems.crl(crl.getEncoded()), snap.issuer().issuerKeyHash(), snap.crlNumber(),
-                    nextUpdate);
+                    nextUpdate, snap.entries().size());
         } catch (IOException | java.security.GeneralSecurityException e) {
             throw new IllegalStateException("cannot build " + purpose + " CRL", e);
         }

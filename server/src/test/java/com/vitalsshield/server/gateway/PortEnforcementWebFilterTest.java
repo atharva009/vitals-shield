@@ -36,8 +36,7 @@ class PortEnforcementWebFilterTest {
                 Arguments.of("/api/v1/pki/root-crl.pem", PUBLIC),
                 Arguments.of("/api/v1/admin/boot-status", ADMIN),
                 Arguments.of("/api/v1/admin", ADMIN),
-                Arguments.of("/api/v1/pki", PUBLIC),
-                Arguments.of("/", ADMIN));
+                Arguments.of("/api/v1/pki", PUBLIC));
     }
 
     @ParameterizedTest
@@ -57,7 +56,7 @@ class PortEnforcementWebFilterTest {
 
     @ParameterizedTest
     @MethodSource("unlistedPaths")
-    void unlistedPathIs404OnEveryPort(String path) {
+    void unlistedApiPathIs404OnEveryPort(String path) {
         for (int port : new int[] {MTLS, PUBLIC, ADMIN}) {
             Outcome outcome = run(path, port);
             assertThat(outcome.passed()).as("%s on %d", path, port).isFalse();
@@ -68,7 +67,21 @@ class PortEnforcementWebFilterTest {
     static List<String> unlistedPaths() {
         // Note: "/api/v1/admin" and "/api/v1/pki" (no trailing segment) match their "/**" patterns and pass on
         // their own port only; see routes().
-        return List.of("/api/v1/devices/renewal", "/api/v1/devices", "/api/v1/telemetryx", "/actuator", "/admin");
+        return List.of("/api/v1/devices/renewal", "/api/v1/devices", "/api/v1/telemetryx", "/api/v2/admin/x",
+                "/api/v1/adminx");
+    }
+
+    /** Dashboard static paths (DECISIONS #47): passed on the admin port only, 404 on 8443 and 8444. */
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"/", "/index.html", "/_next/static/chunks/x.js",
+            "/favicon.ico", "/actuator", "/admin"})
+    void dashboardPathsOnlyOnAdminPort(String path) {
+        assertThat(run(path, ADMIN).passed()).as("%s on admin", path).isTrue();
+        for (int port : new int[] {MTLS, PUBLIC}) {
+            Outcome o = run(path, port);
+            assertThat(o.passed()).as("%s on %d", path, port).isFalse();
+            assertThat(o.status()).isEqualTo(HttpStatus.NOT_FOUND);
+        }
     }
 
     record Outcome(boolean passed, HttpStatus status, boolean bodyEmpty) {

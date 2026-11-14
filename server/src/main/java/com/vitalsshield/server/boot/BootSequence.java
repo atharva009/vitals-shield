@@ -1,6 +1,7 @@
 package com.vitalsshield.server.boot;
 
 import com.vitalsshield.server.admin.AdminSetupCode;
+import com.vitalsshield.server.admin.KmsHealthMonitor;
 import com.vitalsshield.server.gateway.ListenerManager;
 import com.vitalsshield.server.pki.IssuedSerialLedger;
 import com.vitalsshield.server.pki.trust.CertKey;
@@ -39,12 +40,14 @@ public class BootSequence implements ApplicationRunner {
     private final CrlService crls;
     private final IssuedSerialLedger ledger;
     private final AdminSetupCode adminCode;
+    private final KmsHealthMonitor kmsHealth;
     private final ListenerManager listeners;
     private final ApplicationEventPublisher events;
 
     public BootSequence(HierarchyReconciler reconciler, GatewayTlsMaterial gatewayTls, TrustAnchors trustAnchors,
                         CertificateDenyList denyList, CrlService crls, IssuedSerialLedger ledger,
-                        AdminSetupCode adminCode, ListenerManager listeners, ApplicationEventPublisher events) {
+                        AdminSetupCode adminCode, KmsHealthMonitor kmsHealth, ListenerManager listeners,
+                        ApplicationEventPublisher events) {
         this.reconciler = reconciler;
         this.gatewayTls = gatewayTls;
         this.trustAnchors = trustAnchors;
@@ -52,6 +55,7 @@ public class BootSequence implements ApplicationRunner {
         this.crls = crls;
         this.ledger = ledger;
         this.adminCode = adminCode;
+        this.kmsHealth = kmsHealth;
         this.listeners = listeners;
         this.events = events;
     }
@@ -65,6 +69,9 @@ public class BootSequence implements ApplicationRunner {
         ReconcileResult result = reconciler.reconcile();
         log.info("Boot step RECONCILED: {}", result);
         events.publishEvent(new BootStepCompleted(BootStep.RECONCILED));
+        // DECISIONS #49: first health check right after reconciliation, then every 30 s. It never rebuilds.
+        log.info("KMS health after reconcile: {}", kmsHealth.checkNow().state());
+        kmsHealth.start();
 
         // Void reservations that never activated (crash after sign, lost race) before the deny-list is seeded, so the
         // seed and the CRL both include them (DECISIONS #38).

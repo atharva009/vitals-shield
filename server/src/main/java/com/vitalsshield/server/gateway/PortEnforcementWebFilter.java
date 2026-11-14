@@ -16,7 +16,8 @@ import reactor.core.publisher.Mono;
 
 /**
  * Runs first. Each listener port serves a fixed set of paths; anything else is 404 with an empty body (never 403,
- * which would confirm the route exists on another port). An unknown local port serves nothing.
+ * which would confirm the route exists on another port). An unknown local port serves nothing. The admin port also
+ * serves every non-API path (the dashboard's static files, DECISIONS #47); no other port serves any of them.
  */
 @Component
 public class PortEnforcementWebFilter implements WebFilter, Ordered {
@@ -24,8 +25,10 @@ public class PortEnforcementWebFilter implements WebFilter, Ordered {
     public static final int ORDER = Ordered.HIGHEST_PRECEDENCE;
 
     private final Map<Integer, List<PathPattern>> allowed;
+    private final int adminPort;
 
     public PortEnforcementWebFilter(ListenerProperties props) {
+        this.adminPort = props.adminPort();
         this.allowed = Map.of(
                 props.mtlsPort(), patterns(
                         "/api/v1/telemetry/**", "/api/v1/devices/renew", "/api/v1/devices/renew-challenge"),
@@ -46,6 +49,9 @@ public class PortEnforcementWebFilter implements WebFilter, Ordered {
         InetSocketAddress local = exchange.getRequest().getLocalAddress();
         List<PathPattern> patterns = local == null ? List.of() : allowed.getOrDefault(local.getPort(), List.of());
         PathContainer path = exchange.getRequest().getPath().pathWithinApplication();
+        if (local != null && local.getPort() == adminPort && !path.value().startsWith("/api/")) {
+            return chain.filter(exchange); // dashboard static files
+        }
         for (PathPattern p : patterns) {
             if (p.matches(path)) {
                 return chain.filter(exchange);
