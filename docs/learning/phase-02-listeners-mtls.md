@@ -11,6 +11,7 @@ spec Section 1 ("Multi-Port Listener Isolation"), Section 2 layer 1 ("Transport 
 - **Three listeners** (`gateway/ListenerManager.java`), bound only as the last boot step:
   - 8443: TLS 1.3, client certificate required, checked by `DynamicMtlsTrustManager`.
   - 8444: TLS 1.3, no client certificate. Serves the CRLs now; enrollment later.
+    Changed in Phase 3: `POST /api/v1/devices/enroll` (Protocol A) is live on 8444.
   - 8445: plain HTTP, always on 127.0.0.1. Serves `/api/v1/admin/boot-status` now; the dashboard later.
 - **Port enforcement** (`gateway/PortEnforcementWebFilter.java`): each port serves only its own paths; anything else
   is 404 with an empty body.
@@ -286,7 +287,7 @@ handshake (`MtlsListenerIT.denyListSurvivesRestart`).
 
 | Column | Read by | Written by |
 | :--- | :--- | :--- |
-| `issuer_key_hash`, `serial_number` | everything (the `CertKey`) | (enrollment, later) |
+| `issuer_key_hash`, `serial_number` | everything (the `CertKey`) | (enrollment, later; changed in Phase 3: `EnrollmentService` inserts ACTIVE rows and supersedes prior ones) |
 | `status` | `JdbcDenySource` (REVOKED, EXPIRED, RENEWED), `CertStatusResolver` | `SignerRevocationService` (REVOKED) |
 | `revoked_at` | deny-list `deniedFrom` for REVOKED (EPOCH if NULL) | `SignerRevocationService` (same instant as the deny-list entry) |
 | `revocation_reason` | (CRL, Phase 1) | `SignerRevocationService` |

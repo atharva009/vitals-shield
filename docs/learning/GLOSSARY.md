@@ -33,6 +33,10 @@ mark it critical on every certificate.
 `00 00 00 03` in big-endian. All our canonical encodings use big-endian (`uint32_be`, `int64_be`), the same as network
 byte order.
 
+**boot_epoch** (Phase 3): A server-assigned counter that partitions a device's telemetry sequence numbers. A re-provisioned device gets the next epoch so its restarted sequence numbers cannot collide with old ones. A device never chooses its own (DECISIONS #31).
+
+**Bootstrap token** (Phase 3): A one-time secret that authorizes one enrollment of one device. Ours is 32 random bytes (base64url), valid one hour by default, stored only as its SHA-256 hash, and CONSUMED after use. Until Phase 6 the dev seed tool creates it instead of a clinician's WebAuthn action.
+
 **boundedElastic** (Phase 1): A Reactor scheduler with a capped pool of threads meant for blocking work such as
 JDBC or a synchronous HTTP call. Moving a blocking call onto it keeps event loop threads free.
 `KmsSigner.signDigest` uses `subscribeOn(Schedulers.boundedElastic())`.
@@ -80,6 +84,10 @@ same transaction that reads the revoked entries.
 
 **CRL republication** (Phase 2.1): Signing a new CRL when its contents change or before it goes stale, and serving the cached copy in between. Since Phase 2.1 our CRLs are republished after a revocation commits and before nextUpdate, and an HTTP GET never signs (DECISIONS #27).
 
+**CSR (Certificate Signing Request)** (Phase 3): A PKCS#10 document holding a public key, a requested name and extensions, and a signature by the matching private key. Our CA uses only the public key and checks the signature (proof of possession); everything else is ignored.
+
+**DEK (Device Enrollment Key)** (Phase 3): The wearable's long-lived P-256 key, kept in the simulator's key partition (`keys/dek.key`). It proves identity at enrollment and survives state resets. Its public key is anchored in `devices` by a KMS Key #4 signature.
+
 **Deny-list** (Phase 2): A set of things that are refused; anything not listed passes this check. `CertificateDenyList` holds revoked, expired, and superseded certificates in memory, keyed by issuer key hash and serial. A new certificate is not on it, so it connects immediately; the per-request DB check confirms its real status.
 
 **DER (Distinguished Encoding Rules)** (Phase 1): A strict binary encoding for ASN.1 where every value has exactly
@@ -93,6 +101,8 @@ in DER, usually 70 to 72 bytes for P-256. X.509 certificates and CRLs use this f
 **DescribeKey** (Phase 1): The KMS API call that returns a key's metadata, including its state (`Enabled`,
 `Disabled`, `PendingDeletion`, ...). `KmsKeyAdmin.describeEnabled` returns true only if the call succeeds and the state
 is `Enabled`.
+
+**Dev seed tool** (Phase 3): `./gradlew :server:seedDemoDevice`: creates a device, an ACTIVE assignment, and a bootstrap token in the local Compose database, with visibly fake WebAuthn fields. It refuses any other database and is never an HTTP endpoint (DECISIONS #32).
 
 **Digest** (Phase 1): The fixed-size output of a hash function. A SHA-256 digest is always 32 bytes, whatever the
 input size. We send KMS the 32-byte digest of the data to be signed instead of the data itself.
@@ -180,9 +190,13 @@ edited after they ship; a change goes in a new migration. Our only migration is 
 `1.2.840.10045.4.3.2` for ecdsa-with-SHA256 or `2.5.29.19` for Basic Constraints. Extensions, algorithms, and EKU
 purposes are all identified by OIDs.
 
+**OLK (Operational Leaf Key)** (Phase 3): The wearable's short-lived P-256 key, generated fresh at every enrollment and certified for 12 hours. It is used for mTLS and, from Phase 4, for signing telemetry. Kept in the state partition (`state/olk.key`).
+
 **openssl verify** (Phase 1): The OpenSSL command that builds and checks a certificate chain:
 `-CAfile` gives trusted roots, `-untrusted` gives intermediates, and the last argument is the leaf. It prints `OK`
 and exits 0 on success. `PkiOpensslIT` uses it as an independent check of our certificates.
+
+**Oracle (error oracle)** (Phase 3): A difference in responses that tells an attacker something, for example 'token expired' versus 'token unknown'. Enrollment returns one identical 401 body for every invalid-token case so it leaks nothing about which tokens exist.
 
 **P-256** (Phase 0): The NIST elliptic curve also called secp256r1 or prime256v1. It gives about 128-bit security
 with 32-byte private keys. KMS calls it `ECC_NIST_P256`.
@@ -194,11 +208,15 @@ sign only leaves).
 **PEM** (Phase 1): DER bytes encoded in base64 between lines such as `-----BEGIN CERTIFICATE-----` and
 `-----END CERTIFICATE-----`. It is the text form used in files and databases. `ca_issuers.cert_pem` holds PEM.
 
+**PKCS#10** (Phase 3): The standard format for a certificate signing request (RFC 2986). See CSR.
+
 **PKIX** (Phase 1): The IETF profile of X.509 for the internet, defined mainly in RFC 5280. It says which fields and
 extensions certificates and CRLs should have and how to validate a chain. "RFC 5280 profile" in this project means
 PKIX.
 
 **Post-handshake gate** (Phase 2): Our check that runs when any TLS handshake completes on 8443, including resumed ones where the trust manager is not called. It reads the peer certificate from the session, registers the channel, and closes it if the certificate is deny-listed.
+
+**Proof of possession** (Phase 3): Evidence that a party holds a private key, usually a signature made with it over data the verifier checks. The CSR signature proves possession of the OLK; the DEK proof signature proves possession of the DEK.
 
 **PSK (pre-shared key)** (Phase 2): In TLS 1.3 resumption, a secret from an earlier session that the client and server both hold. The client proves it knows the PSK instead of sending a certificate, which is why resumption skips certificate checks.
 
@@ -222,6 +240,8 @@ sequence of RDNs. The order of that sequence in DER is what OpenSSL prints.
 `HierarchyReconciler` compares `kms_keys` with what KMS reports, and either does nothing, rebuilds (local profile), or
 refuses to start.
 
+**Registry anchor** (Phase 3): A KMS Key #4 signature over (device_id, SHA-256 of the DEK public key, provisioning time), stored in `devices.dek_registry_kms_sig`. It lets the server detect a DEK changed by SQL alone. It does not prove the device or key is genuine.
+
 **Request coalescing** (Phase 2.1): Merging many requests for the same expensive work into as few runs as possible. `CrlService` allows one CRL generation in flight; requests that arrive meanwhile set a flag that causes exactly one more run, so 10 concurrent revocations produced 2 new CRLs.
 
 **Root CA** (Phase 1): The top CA in a hierarchy. Its certificate is self-signed and trusted because it was
@@ -238,6 +258,8 @@ has `DNS:localhost, IP:127.0.0.1`; our device leaf has `URI:urn:vitalsshield:dev
 
 **ScheduleKeyDeletion** (Phase 1): The KMS API call that marks a key for deletion after a waiting period of 7 to 30
 days. During the wait the key is in state `PendingDeletion` and cannot sign. Our tests use it to simulate key loss.
+
+**Secure element** (Phase 3): A tamper-resistant chip in a device (for example an ATECC608) that stores keys and signs without exposing them. Our simulated wearable has none, so its DEK is a file that can be copied.
 
 **Self-signed** (Phase 1): A certificate whose issuer and subject are the same and whose signature verifies with its
 own public key. Only a Root should be self-signed. Self-signing proves nothing about trust; it only shows the holder
@@ -297,3 +319,5 @@ extensions. RFC 5280 profiles it for internet use.
 **-x509_strict** (Phase 1): An `openssl verify` flag that turns on extra RFC 5280 checks that are off by default. For
 example, it rejects a non-root certificate without an Authority Key Identifier and a CA certificate without a Subject
 Key Identifier. We run every chain check with it so lenient defaults cannot hide a profile mistake.
+
+**x5t#S256** (Phase 3): A JWS header value: base64url SHA-256 of the signer's certificate DER, 43 characters, no padding (RFC 7515). We store exactly this in `certificates.cert_thumbprint_s256` (DECISIONS #35).

@@ -11,7 +11,8 @@ from the spec.
 | :--- | :--- | :--- |
 | 0 | [Scaffold: build, Compose stack, schema, KMS smoke tests](phase-00-scaffold.md) | `d23ebe7`, `7d8841d` |
 | 1 | [PKI core: KMS-backed CA hierarchy, profiles, CRLs, reconciliation, boot sequence](phase-01-pki-core.md) | `236b697` |
-| 2 | [Listeners, mTLS, deny-list trust, per-request status, live socket eviction](phase-02-listeners-mtls.md) | `7d531f1` |
+| 2 | [Listeners, mTLS, deny-list trust, per-request status, live socket eviction](phase-02-listeners-mtls.md) | `7d531f1`, 2.1: `a16ec1d` |
+| 3 | [Protocol A enrollment, dev seed tool, simulator enroll and persistence](phase-03-enrollment.md) | `adb62df` |
 | | [Glossary](GLOSSARY.md) | |
 
 ## How the whole system fits together
@@ -37,4 +38,12 @@ device on 8443 passes three checks: `DynamicMtlsTrustManager` in the handshake (
 leaf policy, deny-list, all in memory), `PostHandshakeGate` after every handshake including resumed ones, and
 `CertStatusResolver` on every request (the `certificates` row, read on `boundedElastic`, no cache). Revocation goes
 through `SignerRevocationService`: deny-list first, then the database, then `ActiveSessionRegistry` closes the
-device's open connections. The `simulator` module is still a stub; Phase 3 will use `/api/v1/telemetry/ping`.
+device's open connections. Phase 2.1 made every TLS session unresumable and cached the CRLs (a GET never signs).
+Phase 3 added enrollment (Protocol A) on 8444: a device presents a single-use bootstrap token, its long-lived DEK, a
+CSR for a fresh OLK, and a DEK signature binding the three; `EnrollmentService` claims the token in one short
+transaction, verifies both proofs and gets two KMS signatures outside any transaction (the DEK registry anchor with Key
+#4 and the 12-hour leaf with the Device Intermediate), then activates in a second short transaction that supersedes
+any prior certificates (deny-list first, then eviction and CRL republication) and assigns the boot epoch. Until Phase
+6, `./gradlew :server:seedDemoDevice` creates the device, assignment, and token in the local database. The
+`simulator` module now enrolls, keeps its DEK and OLK in a key and a state partition under `simulator-state/`, skips
+re-enrollment while its certificate is valid, and pings `/api/v1/telemetry/ping` over mTLS.
