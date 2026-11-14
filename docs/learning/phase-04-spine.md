@@ -263,6 +263,10 @@ sequenceDiagram
     Q-->>O: 200 {certs_revoked, channels_closed, latency, batches, baselines, alerts}
 ```
 
+Changed in Phase 5: `revokeAllForDevice` now takes the quarantine's request-receipt time `t0` and measures the
+latency once, after every close future completes. The same number goes into the quarantine response and into each
+per-certificate entry of the revocation log that the dashboard shows, so the two can no longer differ.
+
 ### The quarantine/ingest race, blocked
 
 ```mermaid

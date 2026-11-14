@@ -8,6 +8,7 @@ Wearable vitals telemetry with a two-tier KMS-backed PKI. See
 - OrbStack (or another Docker runtime with Compose v2)
 - Host port 5433 free. Compose Postgres uses 5433 instead of 5432 so it does not clash with a host-native Postgres.
 - JDK 21. Gradle uses a Java 21 toolchain and downloads one automatically if none is installed.
+- Node.js 22 or newer and npm, only to build the operator dashboard (`dashboard/`).
 - A `.env` in the repo root, created from `.env.example` with a real LocalStack auth token:
 
   ```sh
@@ -73,7 +74,21 @@ extension's cached Gradle model is stale (it can still describe the old Kotlin D
 | :--- | :--- | :--- |
 | 8443 | TLS 1.3, client certificate required | `/api/v1/telemetry/**`, `/api/v1/devices/renew`, `/api/v1/devices/renew-challenge` |
 | 8444 | TLS 1.3, no client certificate | enrollment routes (later), `/api/v1/pki/intermediate-crl.pem`, `/api/v1/pki/root-crl.pem` |
-| 8445 | plain HTTP, always 127.0.0.1 | `/api/v1/admin/**` (today: `/api/v1/admin/boot-status`) |
+| 8445 | plain HTTP, always 127.0.0.1 | `/api/v1/admin/**`, and from Phase 5 the operator dashboard (every other GET/HEAD path) |
 
 Any other path on a port returns 404 with an empty body. Stop the server with Ctrl-C. `ResumptionIT` needs
 OpenSSL 3 (`OPENSSL_BIN`, default `$(brew --prefix openssl@3)/bin/openssl`).
+
+## Operator dashboard (Phase 5)
+
+The dashboard is a Next.js static export served by the server itself, only on the admin port.
+
+```sh
+cd dashboard && npm ci && npm run build   # writes dashboard/out (gitignored)
+./gradlew :server:bootRun --args='--spring.profiles.active=local'
+open http://127.0.0.1:8445/               # paste the contents of var/admin/setup-code
+```
+
+If `dashboard/out` does not exist, `/` on 8445 answers `dashboard not built: run npm run build in dashboard/`. The
+directory is `vitalsshield.dashboard.dir`. For UI work, `npm run dev` serves on port 3000 and proxies `/api/*` to
+8445. Checks: `npm run typecheck`, `npm run lint`.

@@ -14,6 +14,7 @@ from the spec.
 | 2 | [Listeners, mTLS, deny-list trust, per-request status, live socket eviction](phase-02-listeners-mtls.md) | `7d531f1`, 2.1: `a16ec1d` |
 | 3 | [Protocol A enrollment, dev seed tool, simulator enroll and persistence](phase-03-enrollment.md) | `adb62df` |
 | 4 | [The thin spine: JWS ingest, replay window, quarantine, serial ledger](phase-04-spine.md) | `0c302cd` |
+| 5 | [Operator dashboard: overview API, KMS health monitor, Next.js on the admin port](phase-05-dashboard.md) | `c9645f8` |
 | | [Glossary](GLOSSARY.md) | |
 
 ## How the whole system fits together
@@ -54,4 +55,13 @@ strictly, classifies it by plausibility and perfusion, and stores it with the sp
 `POST /api/v1/admin/devices/{id}/quarantine` (admin port, bearer = the boot setup code) revokes every certificate,
 evicts every socket, then under a row lock marks the device QUARANTINED, clears its DEK, revokes its tokens, and runs
 the spec's dual-timestamp sanitize with scoped alert retraction. Every device serial is reserved in `issued_serials`
-before KMS signs it, so a lost or abandoned leaf is VOIDED onto the CRL and deny-list.
+before KMS signs it, so a lost or abandoned leaf is VOIDED onto the CRL and deny-list. Phase 5 added the operator
+dashboard, only on the admin port. `GET /api/v1/admin/overview` returns boot steps, KMS key health, the three CA
+certificates and the intermediate CRL, live sessions, counters, the serial ledger, recent revocations and quarantines,
+and one row per device (serials in OpenSSL's uppercase form); `GET /api/v1/admin/devices/{id}/telemetry` returns a
+device's newest rows. Both are read-only. `KmsHealthMonitor` describes the four ACTIVE keys at boot and every 30 s and
+reports HEALTHY, UNHEALTHY, or UNKNOWN; it never rebuilds. `DashboardRoutes` serves the Next.js static export from
+`dashboard/out` with traversal checks and a CSP that lists the SHA-256 of each inline script instead of allowing
+`'unsafe-inline'`. The page signs in with the setup code (kept in sessionStorage), polls the overview every 500 ms,
+and its only action is the existing quarantine, which now reports one latency measured from request receipt to every
+socket closed.

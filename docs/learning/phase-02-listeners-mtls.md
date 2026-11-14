@@ -13,6 +13,8 @@ spec Section 1 ("Multi-Port Listener Isolation"), Section 2 layer 1 ("Transport 
   - 8444: TLS 1.3, no client certificate. Serves the CRLs now; enrollment later.
     Changed in Phase 3: `POST /api/v1/devices/enroll` (Protocol A) is live on 8444.
   - 8445: plain HTTP, always on 127.0.0.1. Serves `/api/v1/admin/boot-status` now; the dashboard later.
+    Changed in Phase 5: 8445 also serves the dashboard's static files (any GET or HEAD outside `/api/`), and
+    `PortEnforcementWebFilter` lets those paths through only on the admin port. 8443 and 8444 still 404 them.
 - **Port enforcement** (`gateway/PortEnforcementWebFilter.java`): each port serves only its own paths; anything else
   is 404 with an empty body.
 - **An in-memory deny-list** (`pki/trust/CertificateDenyList.java`) seeded from the database at boot and refreshed

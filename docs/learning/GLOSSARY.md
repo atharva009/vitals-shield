@@ -64,11 +64,17 @@ checks each link.
 
 **Channel** (Phase 2): Netty's object for one open network connection. Closing it sends a TLS close and ends the TCP connection, even if the client is idle on keep-alive. `ActiveSessionRegistry` keeps the channels per certificate so a revoke can close them.
 
+**Clickjacking** (Phase 5): Loading a page inside an invisible frame on another site so a user clicks its buttons without knowing. `X-Frame-Options: DENY` and CSP `frame-ancestors 'none'` stop the dashboard (and its quarantine button) from being framed at all.
+
 **Common table expression (CTE)** (Phase 4): A named sub-query introduced with `WITH`. In Postgres a CTE can itself be an UPDATE or INSERT; all parts run as one statement, so the spec's window update and telemetry insert commit or fail together.
+
+**Content Security Policy (CSP)** (Phase 5): A response header that tells the browser which sources a page may load scripts, styles, images, and connections from. The admin port sends `script-src 'self'` plus hashes, so injected inline script does not run.
 
 **ContentSigner** (Phase 1): A BouncyCastle interface: the certificate builder writes the bytes to be signed into its
 output stream, then asks for the signature. It also reports which signature algorithm it uses. `KmsContentSigner`
 implements it by hashing locally and asking KMS to sign the digest.
+
+**CORS (Cross-Origin Resource Sharing)** (Phase 5): Headers by which a server allows pages from other origins to read its responses. The admin API sends none, so only pages from `http://127.0.0.1:8445` itself can read it.
 
 **Critical extension** (Phase 1): An extension marked so that a verifier that does not understand it must reject
 the certificate. Marking Basic Constraints and Key Usage critical means an old or partial verifier cannot silently
@@ -87,6 +93,8 @@ lets a relying party tell which of two CRLs is newer. We keep it in `ca_issuers.
 same transaction that reads the revoked entries.
 
 **CRL republication** (Phase 2.1): Signing a new CRL when its contents change or before it goes stale, and serving the cached copy in between. Since Phase 2.1 our CRLs are republished after a revocation commits and before nextUpdate, and an HTTP GET never signs (DECISIONS #27).
+
+**CSP hash source** (Phase 5): A `'sha256-<base64>'` entry in `script-src`. The browser runs an inline script only if the SHA-256 of its exact text is listed. `DashboardRoutes` computes these for the Next.js export's inline scripts instead of allowing `'unsafe-inline'` (DECISIONS #52).
 
 **CSR (Certificate Signing Request)** (Phase 3): A PKCS#10 document holding a public key, a requested name and extensions, and a signature by the matching private key. Our CA uses only the public key and checks the signature (proof of possession); everything else is ignored.
 
@@ -129,6 +137,8 @@ on P-256 with SHA-256.
 short callbacks and move on. Reactor Netty uses event loops. A blocking call on an event loop stalls every connection
 on that thread, which is why KMS calls must not run there.
 
+**EventSource** (Phase 5): The browser API for Server-Sent Events, a one-way stream of updates from server to page. It cannot set an `Authorization` header, which is why the dashboard polls with `fetch` instead (DECISIONS #48).
+
 **Eviction** (Phase 2): Closing a client's live connection on purpose. After a revoke, `SignerRevocationService` closes every channel for that certificate; the measured time was a few milliseconds. The client must reconnect and is then refused.
 
 **Extended Key Usage (EKU)** (Phase 1): A certificate extension listing application purposes for the key, by OID,
@@ -157,6 +167,8 @@ are ordinary data in a container.
 
 **HttpHandler** (Phase 2): Spring's lowest-level reactive HTTP entry point: one function from request to response. We build one from the application context (all controllers and WebFilters) and share it between the three Reactor Netty servers.
 
+**Hydration** (Phase 5): React attaching event handlers and state to HTML that already exists. The Next.js export's inline scripts carry the data hydration reads, which is why they need CSP hashes.
+
 **Idempotent retry** (Phase 4): Re-sending exactly the same frame (same batch_id and bytes) after a lost response. The server answers 200 with `idempotent_retry: true` and stores nothing new.
 
 **Intermediate CA** (Phase 1): A CA whose certificate is signed by the Root (or another intermediate) and which signs
@@ -180,6 +192,8 @@ gives no hardware protection.
 **KMS (Key Management Service)** (Phase 0): AWS's managed service for creating keys and using them (sign, verify,
 encrypt) through an API, without ever returning the private key. We use `ECC_NIST_P256` keys with `SIGN_VERIFY` usage.
 Locally, LocalStack emulates the same API.
+
+**KMS health monitor** (Phase 5): `admin/KmsHealthMonitor`. Reports HEALTHY, UNHEALTHY (a key disabled or missing), or UNKNOWN (the check failed). It alarms and never rebuilds; recovery is a deliberate restart (DECISIONS #49).
 
 **Leaf certificate** (Phase 1): A certificate at the bottom of a chain, with `CA:FALSE`, issued to an end entity
 such as a device or a server. It cannot sign other certificates. Our leaves are the device leaf and the gateway leaf.
@@ -212,8 +226,12 @@ and exits 0 on success. `PkiOpensslIT` uses it as an independent check of our ce
 
 **Oracle (error oracle)** (Phase 3): A difference in responses that tells an attacker something, for example 'token expired' versus 'token unknown'. Enrollment returns one identical 401 body for every invalid-token case so it leaks nothing about which tokens exist.
 
+**Origin** (Phase 5): Scheme, host, and port together, for example `http://127.0.0.1:8445`. Browsers isolate data by origin; 8444 and 8445 on the same host are different origins.
+
 **P-256** (Phase 0): The NIST elliptic curve also called secp256r1 or prime256v1. It gives about 128-bit security
 with 32-byte private keys. KMS calls it `ECC_NIST_P256`.
+
+**Path traversal** (Phase 5): Using `..` (often percent-encoded as `..%2f`) in a URL to make a file server read outside its directory. `DashboardRoutes.resolve` decodes, normalizes, and checks the real path stays inside `dashboard/out`, answering 404 otherwise.
 
 **pathLenConstraint** (Phase 1): A field in Basic Constraints that limits how many CA certificates may appear below
 this one in a chain. Our Root has `pathlen:1` (one intermediate level) and each intermediate has `pathlen:0` (it may
@@ -295,6 +313,8 @@ zeros.
 
 **Session resumption** (Phase 2): Starting a new TLS connection from a previous session's secrets instead of a full handshake. It is faster but skips certificate validation, so a revoked client could get back in; the post-handshake gate closes that gap.
 
+**sessionStorage** (Phase 5): Browser storage scoped to one tab and cleared when it closes. The dashboard keeps the admin setup code there until WebAuthn (DECISIONS #47).
+
 **Setup code** (Phase 4): A random 32-byte bearer token generated at every boot and written to `var/admin/setup-code` (mode 600); the admin API's only authentication until WebAuthn (DECISIONS #41).
 
 **SHA-256** (Phase 0): A hash function with a 32-byte output. We use it for signature digests, SKIs (and so `issuer_key_hash`), and the
@@ -312,6 +332,8 @@ DER (32 bytes), and its hex is `issuer_key_hash`.
 **SslHandler** (Phase 2): The Netty pipeline component that runs TLS for one channel. Its `handshakeFuture()` completes when the handshake finishes, and its `SSLEngine` session holds the peer certificate. The post-handshake gate listens on it.
 
 **SslProvider** (Phase 2): Netty's choice of TLS implementation: `JDK` (Java's JSSE) or `OPENSSL` (native). We force `JDK` so our Java trust manager is called exactly as JSSE documents.
+
+**Static export** (Phase 5): Next.js `output: "export"`: the build writes plain HTML, JS, and CSS files and no server code runs. The Java server serves `dashboard/out/` on the admin port.
 
 **Sweep (serial sweep)** (Phase 4): Voiding every RESERVED serial older than 2 minutes, at boot (SERIALS_SWEPT) and on every stale token reclaim, so a crash between signing and activation still ends with a revocable serial.
 
