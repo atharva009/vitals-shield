@@ -28,6 +28,8 @@ spec Section 1 ("Multi-Port Listener Isolation"), Section 2 layer 1 ("Transport 
 - **Routes**: `GET /api/v1/telemetry/ping` (8443), `GET /api/v1/pki/intermediate-crl.pem` and `root-crl.pem` (8444),
   `GET /api/v1/admin/boot-status` (8445).
 - **Two new boot steps**: `DENY_LIST_SEEDED`, then `LISTENERS_BOUND` (always last).
+  Changed in Phase 4: the order is now RECONCILED, SERIALS_SWEPT, GATEWAY_TLS_ISSUED, TRUST_ANCHORS_LOADED,
+  DENY_LIST_SEEDED, CRLS_PUBLISHED, ADMIN_CODE_ISSUED, LISTENERS_BOUND (eight steps; LISTENERS_BOUND still last).
 
 Deviations from the spec. Numbers refer to [`docs/DECISIONS.md`](../DECISIONS.md), which was created in Phase 2.1;
 the last two rows changed in Phase 2.1 (see section 11):

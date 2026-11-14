@@ -25,6 +25,8 @@ ASN.1 value into bytes.
 filesystem operation. A reader sees either the whole old file or the whole new file, never a half-written one.
 `TrustFileWriter` writes the Root PEM this way with `ATOMIC_MOVE` and `REPLACE_EXISTING`.
 
+**base64url** (Phase 4): Base64 with `-` and `_` instead of `+` and `/`, and no `=` padding, so the text is safe in URLs and headers. JWS parts and x5t#S256 use it.
+
 **Basic Constraints** (Phase 1): A certificate extension that says whether the subject is a CA (`CA:TRUE`) and so may
 sign other certificates. A verifier must reject any chain where a non-CA certificate signed another certificate. We
 mark it critical on every certificate.
@@ -61,6 +63,8 @@ checks each link.
 **CertificateRequest** (Phase 2): The TLS handshake message in which the server asks the client for a certificate. It can list the CA names the server accepts; ours lists only the current Device Intermediate (`getAcceptedIssuers`). It is sent only on the mTLS port.
 
 **Channel** (Phase 2): Netty's object for one open network connection. Closing it sends a TLS close and ends the TCP connection, even if the client is idle on keep-alive. `ActiveSessionRegistry` keeps the channels per certificate so a revoke can close them.
+
+**Common table expression (CTE)** (Phase 4): A named sub-query introduced with `WITH`. In Postgres a CTE can itself be an UPDATE or INSERT; all parts run as one statement, so the spec's window update and telemetry insert commit or fail together.
 
 **ContentSigner** (Phase 1): A BouncyCastle interface: the certificate builder writes the bytes to be signed into its
 output stream, then asks for the signature. It also reports which signature algorithm it uses. `KmsContentSigner`
@@ -111,11 +115,15 @@ input size. We send KMS the 32-byte digest of the data to be signed instead of t
 such as `CN` (common name) and `O` (organization). Our Root DN is "CN=VitalsShield Root CA, O=VitalsShield". In DER it
 is a sequence of RDNs.
 
+**Dual-timestamp quarantine** (Phase 4): Selecting batches for quarantine when either the device's `measured_at` or the server's `ingested_at` is inside the lookback window, so backdated forgeries and late uploads are both caught (spec Section 6).
+
 **ECDSA** (Phase 0): Elliptic Curve Digital Signature Algorithm. The signer uses a private key and a random value to
 produce a pair of numbers (r, s); anyone with the public key can verify them. Every signature in VitalsShield is ECDSA
 on P-256 with SHA-256.
 
 **Ephemeral port** (Phase 2): A free port number picked at run time instead of a fixed one. Integration tests use them for all three listeners so they never collide with a running server on 8443 to 8445. `TestPorts` finds free ones by briefly opening port 0.
+
+**ES256** (Phase 4): ECDSA on P-256 with SHA-256, as named in JWS (RFC 7518). Its signature is the 64-byte R||S form, not DER.
 
 **Event loop** (Phase 1): A small number of threads that each handle many connections by never blocking: they run
 short callbacks and move on. Reactor Netty uses event loops. A blocking call on an event loop stalls every connection
@@ -149,9 +157,15 @@ are ordinary data in a container.
 
 **HttpHandler** (Phase 2): Spring's lowest-level reactive HTTP entry point: one function from request to response. We build one from the application context (all controllers and WebFilters) and share it between the three Reactor Netty servers.
 
+**Idempotent retry** (Phase 4): Re-sending exactly the same frame (same batch_id and bytes) after a lost response. The server answers 200 with `idempotent_retry: true` and stores nothing new.
+
 **Intermediate CA** (Phase 1): A CA whose certificate is signed by the Root (or another intermediate) and which signs
 leaf certificates. It lets the Root key stay offline and lets you replace a compromised issuer without replacing the
 Root. We have two: the Device Issuing Intermediate and the Server TLS CA.
+
+**Issued serials ledger** (Phase 4): The `issued_serials` table (V2): every device leaf serial is RESERVED before signing, RECORDED on activation, or VOIDED; VOIDED serials go on the CRL and deny-list (DECISIONS #38).
+
+**JWS (JSON Web Signature)** (Phase 4): RFC 7515. In compact form three base64url parts joined by dots: header, payload, signature over `header.payload`. VitalsShield telemetry batches are JWS signed by the device's OLK.
 
 **Keep-alive** (Phase 2): HTTP/1.1 behaviour where one TCP connection carries many requests instead of one. It saves handshakes but means a client can stay connected for a long time, which is why revocation needs per-request checks and socket eviction, not only a handshake check.
 
@@ -232,6 +246,8 @@ sequence of RDNs. The order of that sequence in DER is what OpenSSL prints.
 
 **Reactor Netty** (Phase 2): The non-blocking network library under Spring WebFlux. It runs servers on a few event loop threads. We create three `HttpServer` instances with it in `ListenerManager`.
 
+**READ COMMITTED** (Phase 4): Postgres's default isolation level: each statement sees data committed before that statement began, and an UPDATE that waited on a row lock re-checks its WHERE clause on the new row version. DECISIONS #42 relies on both.
+
 **Reason code** (Phase 1): A CRL entry extension that says why a certificate was revoked, such as `keyCompromise`
 (1), `superseded` (4), or `cessationOfOperation` (5). `CrlReasons` maps our database reasons to these codes. For
 `unspecified` (0) we omit the extension, as RFC 5280 recommends.
@@ -242,11 +258,15 @@ refuses to start.
 
 **Registry anchor** (Phase 3): A KMS Key #4 signature over (device_id, SHA-256 of the DEK public key, provisioning time), stored in `devices.dek_registry_kms_sig`. It lets the server detect a DEK changed by SQL alone. It does not prove the device or key is genuine.
 
+**Replay window** (Phase 4): The 64-bit `replay_bitmap` plus `last_sequence_num` on each device: a sequence is accepted once if it is newer than the newest or at most 63 behind with its bit clear.
+
 **Request coalescing** (Phase 2.1): Merging many requests for the same expensive work into as few runs as possible. `CrlService` allows one CRL generation in flight; requests that arrive meanwhile set a flag that causes exactly one more run, so 10 concurrent revocations produced 2 new CRLs.
 
 **Root CA** (Phase 1): The top CA in a hierarchy. Its certificate is self-signed and trusted because it was
 distributed out of band, not because of a signature. Ours is "CN=VitalsShield Root CA, O=VitalsShield", valid 10
 years, published to `var/trust/root-ca.pem`.
+
+**Row lock** (Phase 4): The lock Postgres takes on a row an UPDATE or `SELECT ... FOR UPDATE` touches, held until commit. It serializes concurrent duplicates and the quarantine/ingest race.
 
 **R||S** (Phase 1): The other common ECDSA signature format: r and s each as a fixed 32-byte big-endian number,
 concatenated into 64 bytes. JWS (`ES256`) uses this form. KMS returns DER, so a later phase must convert DER to R||S
@@ -258,6 +278,8 @@ has `DNS:localhost, IP:127.0.0.1`; our device leaf has `URI:urn:vitalsshield:dev
 
 **ScheduleKeyDeletion** (Phase 1): The KMS API call that marks a key for deletion after a waiting period of 7 to 30
 days. During the wait the key is in state `PendingDeletion` and cannot sign. Our tests use it to simulate key loss.
+
+**Scoped alert retraction** (Phase 4): Retracting only alerts triggered by quarantined batches or drift alerts computed against a tainted baseline version, leaving unrelated alerts active.
 
 **Secure element** (Phase 3): A tamper-resistant chip in a device (for example an ATECC608) that stores keys and signs without exposing them. Our simulated wearable has none, so its DEK is a file that can be copied.
 
@@ -272,6 +294,8 @@ zeros.
 **Session invalidation** (Phase 2.1): Marking a TLS session as unusable for future connections with `SSLSession.invalidate()`, which also removes it from the JDK server's session cache. Our post-handshake gate does it after every handshake check, so a client can never resume and must do a full handshake each time (DECISIONS #26).
 
 **Session resumption** (Phase 2): Starting a new TLS connection from a previous session's secrets instead of a full handshake. It is faster but skips certificate validation, so a revoked client could get back in; the post-handshake gate closes that gap.
+
+**Setup code** (Phase 4): A random 32-byte bearer token generated at every boot and written to `var/admin/setup-code` (mode 600); the admin API's only authentication until WebAuthn (DECISIONS #41).
 
 **SHA-256** (Phase 0): A hash function with a 32-byte output. We use it for signature digests, SKIs (and so `issuer_key_hash`), and the
 fixed-width `sha256(...)` fields inside the canonical encodings.
@@ -288,6 +312,8 @@ DER (32 bytes), and its hex is `issuer_key_hash`.
 **SslHandler** (Phase 2): The Netty pipeline component that runs TLS for one channel. Its `handshakeFuture()` completes when the handshake finishes, and its `SSLEngine` session holds the peer certificate. The post-handshake gate listens on it.
 
 **SslProvider** (Phase 2): Netty's choice of TLS implementation: `JDK` (Java's JSSE) or `OPENSSL` (native). We force `JDK` so our Java trust manager is called exactly as JSSE documents.
+
+**Sweep (serial sweep)** (Phase 4): Voiding every RESERVED serial older than 2 minutes, at boot (SERIALS_SWEPT) and on every stale token reclaim, so a crash between signing and activation still ends with a revocable serial.
 
 **TBS (to-be-signed)** (Phase 1): The part of a certificate or CRL that the signature covers: everything except the
 signature algorithm field outside it and the signature itself. The builder serializes the TBS to DER and hands those
@@ -312,6 +338,8 @@ set `notBefore` to now minus 60 seconds to absorb clock skew. The Root gets 10 y
 leaves 12 hours, the gateway leaf 24 hours.
 
 **WebFilter** (Phase 2): A Spring WebFlux component that runs before controllers and can pass the request on or answer it. `PortEnforcementWebFilter` runs first (404 for wrong ports), then `CertStatusResolver` (403 for unaccepted certificates).
+
+**Write-ahead (sequence)** (Phase 4): The simulator persists the next sequence number before sending the batch that uses it, so a crash can never send two different batches with the same number.
 
 **X.509** (Phase 1): The ITU standard format for public key certificates and CRLs, defined in ASN.1. Version 3 added
 extensions. RFC 5280 profiles it for internet use.

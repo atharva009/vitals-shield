@@ -348,6 +348,11 @@ sequenceDiagram
 
 `KmsCertificateIssuer.issueDeviceLeaf(deviceId, spki, ttl)`:
 
+Changed in Phase 4: the signature is now `issueDeviceLeaf(deviceId, spki, ttl, serial)`. The serial comes from
+`SerialAllocator` and is reserved in the `issued_serials` ledger before any KMS call (DECISIONS #38); the CA never
+signs a device serial it has not recorded. See the Phase 4 note.
+
+
 1. `CaIssuerRepository.requireActive(DEVICE_INTERMEDIATE)`: joins `ca_issuers.kms_primary_arn` to
    `kms_keys.kms_key_id` where the key purpose is DEVICE_INTERMEDIATE, key status ACTIVE, issuer status ACTIVE.
 2. `CertificateProfiles.deviceLeaf` validates the device ID (`[A-Za-z0-9_.-]{1,64}`), builds the TBS with issuer DN

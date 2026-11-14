@@ -262,6 +262,10 @@ A failed proof means someone holds the token but not the matching keys, so the t
 be retried (DECISIONS #34). A transient KMS failure is different: the token goes back to ISSUED and the caller gets
 503 with `Retry-After: 5` (`kmsFailureReturnsToken`).
 
+Changed in Phase 4: Retry-After is now a random integer from 3 to 8 seconds. Tx 1 also reserves the leaf serial in
+`issued_serials`, and every failure path voids it (and stores an already-signed leaf as REVOKED); an activation that
+finds its token or serial taken returns 409 ENROLLMENT_SUPERSEDED (DECISIONS #38).
+
 ## 4. Data model
 
 ### `device_bootstrap_tokens`

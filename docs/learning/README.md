@@ -13,6 +13,7 @@ from the spec.
 | 1 | [PKI core: KMS-backed CA hierarchy, profiles, CRLs, reconciliation, boot sequence](phase-01-pki-core.md) | `236b697` |
 | 2 | [Listeners, mTLS, deny-list trust, per-request status, live socket eviction](phase-02-listeners-mtls.md) | `7d531f1`, 2.1: `a16ec1d` |
 | 3 | [Protocol A enrollment, dev seed tool, simulator enroll and persistence](phase-03-enrollment.md) | `adb62df` |
+| 4 | [The thin spine: JWS ingest, replay window, quarantine, serial ledger](phase-04-spine.md) | `0c302cd` |
 | | [Glossary](GLOSSARY.md) | |
 
 ## How the whole system fits together
@@ -46,4 +47,11 @@ transaction, verifies both proofs and gets two KMS signatures outside any transa
 any prior certificates (deny-list first, then eviction and CRL republication) and assigns the boot epoch. Until Phase
 6, `./gradlew :server:seedDemoDevice` creates the device, assignment, and token in the local database. The
 `simulator` module now enrolls, keeps its DEK and OLK in a key and a state partition under `simulator-state/`, skips
-re-enrollment while its certificate is valid, and pings `/api/v1/telemetry/ping` over mTLS.
+re-enrollment while its certificate is valid, and pings `/api/v1/telemetry/ping` over mTLS. Phase 4 closed the spine. The simulator now streams
+ES256 JWS batches over a persistent mTLS connection to `POST /api/v1/telemetry/ingest`; the server checks that the TLS
+certificate, the JWS `x5t#S256`, and the stored thumbprint agree, verifies with the TLS key only, parses the payload
+strictly, classifies it by plausibility and perfusion, and stores it with the spec's single-CTE 64-bit replay window.
+`POST /api/v1/admin/devices/{id}/quarantine` (admin port, bearer = the boot setup code) revokes every certificate,
+evicts every socket, then under a row lock marks the device QUARANTINED, clears its DEK, revokes its tokens, and runs
+the spec's dual-timestamp sanitize with scoped alert retraction. Every device serial is reserved in `issued_serials`
+before KMS signs it, so a lost or abandoned leaf is VOIDED onto the CRL and deny-list.
