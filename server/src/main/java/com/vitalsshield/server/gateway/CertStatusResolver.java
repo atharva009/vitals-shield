@@ -49,7 +49,8 @@ public class CertStatusResolver implements WebFilter, Ordered {
         return ORDER;
     }
 
-    record Row(String status, String deviceId, Instant notBefore, Instant notAfter, Instant graceExpiresAt) {
+    record Row(String status, String deviceId, Instant notBefore, Instant notAfter, Instant graceExpiresAt,
+               String thumbprint) {
     }
 
     @Override
@@ -86,7 +87,8 @@ public class CertStatusResolver implements WebFilter, Ordered {
                     }
                     Row row = rows.get(0);
                     exchange.getAttributes().put(ResolvedCert.ATTRIBUTE,
-                            new ResolvedCert(k.issuerKeyHash(), k.serial(), row.deviceId(), row.status()));
+                            new ResolvedCert(k.issuerKeyHash(), k.serial(), row.deviceId(), row.status(),
+                                    row.thumbprint()));
                     return chain.filter(exchange);
                 });
     }
@@ -121,12 +123,13 @@ public class CertStatusResolver implements WebFilter, Ordered {
 
     private List<Row> load(CertKey key) {
         return jdbc.query("""
-                SELECT status::text AS status, device_id, not_before, not_after, grace_expires_at
+                SELECT status::text AS status, device_id, not_before, not_after, grace_expires_at, cert_thumbprint_s256
                   FROM certificates
                  WHERE issuer_key_hash = ? AND serial_number = ?
                 """, (rs, i) -> new Row(rs.getString("status"), rs.getString("device_id"),
                 rs.getTimestamp("not_before").toInstant(), rs.getTimestamp("not_after").toInstant(),
-                instant(rs.getTimestamp("grace_expires_at"))), key.issuerKeyHash(), key.serial());
+                instant(rs.getTimestamp("grace_expires_at")), rs.getString("cert_thumbprint_s256")),
+                key.issuerKeyHash(), key.serial());
     }
 
     private static Instant instant(Timestamp ts) {

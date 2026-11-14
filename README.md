@@ -47,10 +47,6 @@ Warning: LocalStack keeps no state across restarts. `docker compose stop`, `dock
 `docker compose restart localstack`, and `scripts/kms-probe.sh --restart` all wipe every KMS key, and the next server
 boot rebuilds the CA hierarchy and revokes every device certificate.
 
-In IntelliJ, set Settings > Build, Execution, Deployment > Build Tools > Gradle > "Build and run using: Gradle", so the
-IDE and Gradle do not write to the same output directory (the likely cause of a one-off
-`ClassNotFoundException: ReconcileResult`).
-
 In VS Code, red "cannot be resolved" errors on imports such as `software.amazon.awssdk.http.urlconnection`,
 `org.testcontainers.postgresql`, or `com.vitalsshield.simulator` while `./gradlew build` passes mean the Java
 extension's cached Gradle model is stale (it can still describe the old Kotlin DSL build). Run

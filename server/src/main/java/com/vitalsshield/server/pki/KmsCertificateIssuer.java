@@ -1,6 +1,7 @@
 package com.vitalsshield.server.pki;
 
 import com.vitalsshield.server.kms.KmsSigner;
+import java.math.BigInteger;
 import java.security.PublicKey;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
@@ -22,10 +23,11 @@ public class KmsCertificateIssuer implements CertificateIssuer {
     }
 
     @Override
-    public X509Certificate issueDeviceLeaf(String deviceId, SubjectPublicKeyInfo spki, Duration ttl) {
+    public X509Certificate issueDeviceLeaf(String deviceId, SubjectPublicKeyInfo spki, Duration ttl,
+                                           BigInteger serial) {
         CaIssuer ca = issuers.requireActive(KeyPurpose.DEVICE_INTERMEDIATE);
         return profiles.deviceLeaf(deviceId, spki, ca.certificate(), ttl,
-                KmsContentSigner.forKmsKey(kmsSigner, ca.kmsArn()));
+                KmsContentSigner.forKmsKey(kmsSigner, ca.kmsArn()), serial);
     }
 
     @Override

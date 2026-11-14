@@ -118,8 +118,8 @@ class MtlsListenerIT {
     void bootStepsInOrder() {
         assertThat(server.bean(BootStatusTracker.class).completed())
                 .extracting(BootStatusTracker.Completed::step)
-                .containsExactly(BootStep.RECONCILED, BootStep.GATEWAY_TLS_ISSUED, BootStep.TRUST_ANCHORS_LOADED,
-                        BootStep.DENY_LIST_SEEDED, BootStep.CRLS_PUBLISHED, BootStep.LISTENERS_BOUND);
+                .containsExactly(BootStep.RECONCILED, BootStep.SERIALS_SWEPT, BootStep.GATEWAY_TLS_ISSUED, BootStep.TRUST_ANCHORS_LOADED,
+                        BootStep.DENY_LIST_SEEDED, BootStep.CRLS_PUBLISHED, BootStep.ADMIN_CODE_ISSUED, BootStep.LISTENERS_BOUND);
     }
 
     @Test

@@ -115,7 +115,7 @@ class ReconciliationIT {
                                      dek_registry_kms_sig, provisioned_at, trust_state)
                 VALUES ('dev_reconcile_01', 'sim-v1', 'AAAA', ?, 'c2ln', NOW(), 'ACTIVE')
                 """, "b".repeat(64));
-        X509Certificate leaf = certificateIssuer.issueDeviceLeaf("dev_reconcile_01", localSpki(), Duration.ofHours(12));
+        X509Certificate leaf = certificateIssuer.issueDeviceLeaf("dev_reconcile_01", localSpki(), Duration.ofHours(12), new com.vitalsshield.server.pki.SerialAllocator().next());
         String serial = SerialNumbers.toHex(leaf.getSerialNumber());
         jdbc.update("""
                 INSERT INTO certificates (issuer_key_hash, serial_number, device_id, cert_thumbprint_s256, cert_pem,

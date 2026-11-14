@@ -6,14 +6,18 @@ import com.vitalsshield.crypto.EcKeys;
 import com.vitalsshield.crypto.encoding.CanonicalEncodings;
 import com.vitalsshield.server.kms.KmsSigner;
 import com.vitalsshield.server.pki.ActiveKmsKeys;
+import com.vitalsshield.server.pki.CaIssuerRepository;
 import com.vitalsshield.server.pki.CertificateIssuer;
 import com.vitalsshield.server.pki.CrlService;
+import com.vitalsshield.server.pki.IssuedSerialLedger;
 import com.vitalsshield.server.pki.KeyPurpose;
 import com.vitalsshield.server.pki.Pems;
 import com.vitalsshield.server.pki.PkiProperties;
+import com.vitalsshield.server.pki.SerialNumbers;
 import com.vitalsshield.server.pki.trust.CertKey;
 import com.vitalsshield.server.pki.trust.CertificateDenyList;
 import com.vitalsshield.server.session.ActiveSessionRegistry;
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -34,6 +38,7 @@ import java.util.UUID;
 import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -52,12 +57,19 @@ import reactor.core.scheduler.Schedulers;
  * </ol>
  * Token semantics (DECISIONS #34): a proof failure burns the token (REVOKED); a transient KMS or DB failure returns it
  * to ISSUED; a CLAIMING token older than 2 minutes can be claimed again.
+ *
+ * <p>Serial ledger (DECISIONS #38): Tx 1 reserves the leaf serial before any KMS call; Tx 2 records it. Every path
+ * that does not activate voids it, and if a leaf was already signed it is stored REVOKED (REPLACED_BEFORE_USE) and
+ * deny-listed, so every serial the CA signs is recorded or revocable.
  */
 @Service
 public class EnrollmentService {
 
     private static final Logger log = LoggerFactory.getLogger(EnrollmentService.class);
-    static final int RETRY_AFTER_SECONDS = 5;
+    /** 503 Retry-After is a random integer from 3 to 8 seconds, so retries from many devices spread out. */
+    static int retryAfterSeconds() {
+        return java.util.concurrent.ThreadLocalRandom.current().nextInt(3, 9);
+    }
 
     private final JdbcTemplate jdbc;
     private final TransactionTemplate tx;
@@ -69,10 +81,14 @@ public class EnrollmentService {
     private final CrlService crls;
     private final PkiProperties pki;
     private final Clock clock;
+    private final IssuedSerialLedger ledger;
+    private final CaIssuerRepository issuers;
+    private final EnrollmentHooks hooks;
 
     public EnrollmentService(JdbcTemplate jdbc, TransactionTemplate tx, KmsSigner kmsSigner, ActiveKmsKeys kmsKeys,
                              CertificateIssuer issuer, CertificateDenyList denyList, ActiveSessionRegistry sessions,
-                             CrlService crls, PkiProperties pki, Clock clock) {
+                             CrlService crls, PkiProperties pki, Clock clock, IssuedSerialLedger ledger,
+                             CaIssuerRepository issuers, ObjectProvider<EnrollmentHooks> hooks) {
         this.jdbc = jdbc;
         this.tx = tx;
         this.kmsSigner = kmsSigner;
@@ -83,6 +99,9 @@ public class EnrollmentService {
         this.crls = crls;
         this.pki = pki;
         this.clock = clock;
+        this.ledger = ledger;
+        this.issuers = issuers;
+        this.hooks = hooks.getIfAvailable(() -> EnrollmentHooks.NONE);
     }
 
     /** Runs the blocking flow on boundedElastic, then the after-commit eviction. */
@@ -96,7 +115,15 @@ public class EnrollmentService {
                         .thenReturn(result));
     }
 
-    record Claim(UUID tokenId, String assignmentId, Instant assignmentActiveFrom) {
+    record Claim(UUID tokenId, String assignmentId, Instant assignmentActiveFrom, CertKey reserved,
+                 BigInteger serial) {
+    }
+
+    /** Activation found the token or the reserved serial taken by someone else. */
+    static final class ActivationSuperseded extends RuntimeException {
+        ActivationSuperseded(String message) {
+            super(message);
+        }
     }
 
     EnrollmentResult enrollBlocking(EnrollRequest req) {
@@ -122,48 +149,105 @@ public class EnrollmentService {
             }
         } catch (Exception e) {
             log.info("Enrollment proof invalid for {}; token burned: {}", req.deviceId(), e.getMessage());
-            setTokenStatus(claim.tokenId(), "REVOKED");
+            tx.executeWithoutResult(s -> {
+                setTokenStatusInTx(claim.tokenId(), "REVOKED");
+                ledger.voidSerial(claim.reserved(), req.deviceId(), clock.instant());
+            });
             return EnrollmentResult.error(400, "PROOF_INVALID");
         }
 
         // ---- Out of transaction: KMS anchor and leaf issuance -----------------------------------------------------
         Instant provisionedAt = clock.instant().truncatedTo(ChronoUnit.MILLIS);
         String dekAnchorSig;
-        X509Certificate cert;
+        X509Certificate cert = null;
         try {
             byte[] anchorBytes = CanonicalEncodings.dekAnchorBytes(
                     req.deviceId(), req.dekSpkiDer(), provisionedAt.toEpochMilli());
             byte[] der = kmsSigner.signDigestBlocking(kmsKeys.requireArn(KeyPurpose.REGISTRY_ANCHOR), sha256(anchorBytes));
             dekAnchorSig = Base64.getEncoder().encodeToString(der);
-            cert = issuer.issueDeviceLeaf(req.deviceId(), olkSpki, pki.deviceLeafTtl());
+            cert = issuer.issueDeviceLeaf(req.deviceId(), olkSpki, pki.deviceLeafTtl(), claim.serial());
         } catch (RuntimeException e) {
             log.warn("Enrollment for {} hit a transient failure; token returned: {}", req.deviceId(), e.toString());
-            setTokenStatus(claim.tokenId(), "ISSUED");
-            return EnrollmentResult.unavailable(RETRY_AFTER_SECONDS);
+            return transientFailure(req, claim, cert);
         }
+        // Errors thrown here (test crash simulation) deliberately skip every cleanup path: only the sweep recovers.
+        hooks.afterLeafSigned(req.deviceId());
 
         // ---- Short Tx 2: activate ---------------------------------------------------------------------------------
+        X509Certificate signed = cert;
         try {
-            return tx.execute(status -> activate(req, claim, cert, dekAnchorSig, provisionedAt));
+            return tx.execute(status -> activate(req, claim, signed, dekAnchorSig, provisionedAt));
+        } catch (ActivationSuperseded e) {
+            log.warn("Enrollment for {} superseded during activation ({}); voiding serial {}", req.deviceId(),
+                    e.getMessage(), claim.serial().toString(16));
+            abandonSignedLeaf(req.deviceId(), claim, signed, false);
+            return EnrollmentResult.error(409, "ENROLLMENT_SUPERSEDED");
         } catch (RuntimeException e) {
             log.warn("Enrollment activation for {} failed; token returned: {}", req.deviceId(), e.toString());
-            setTokenStatus(claim.tokenId(), "ISSUED");
-            return EnrollmentResult.unavailable(RETRY_AFTER_SECONDS);
+            return transientFailure(req, claim, signed);
         }
+    }
+
+    /** KMS or DB trouble: token back to ISSUED, serial VOIDED, and any signed leaf stored REVOKED. */
+    private EnrollmentResult transientFailure(EnrollRequest req, Claim claim, X509Certificate signedOrNull) {
+        try {
+            abandonSignedLeaf(req.deviceId(), claim, signedOrNull, true);
+        } catch (RuntimeException cleanup) {
+            // The reservation stays RESERVED; the 2-minute sweep voids it and the deny-list/CRL pick it up.
+            log.error("Could not void serial {} for {}: {}", claim.serial().toString(16), req.deviceId(),
+                    cleanup.toString());
+        }
+        return EnrollmentResult.unavailable(retryAfterSeconds());
+    }
+
+    /**
+     * One short transaction: VOID the serial; if a leaf was signed, store it REVOKED (REPLACED_BEFORE_USE) at the same
+     * instant and deny-list it (before commit). Optionally returns the token to ISSUED. Then republish the CRL.
+     */
+    private void abandonSignedLeaf(String deviceId, Claim claim, X509Certificate signedOrNull, boolean returnToken) {
+        Instant voidedAt = clock.instant();
+        tx.executeWithoutResult(s -> {
+            if (returnToken) {
+                setTokenStatusInTx(claim.tokenId(), "ISSUED");
+            }
+            ledger.voidSerial(claim.reserved(), deviceId, voidedAt);
+            if (signedOrNull != null) {
+                CertKey key = CertKey.from(signedOrNull);
+                if (!key.equals(claim.reserved())) {
+                    ledger.voidSerial(key, deviceId, voidedAt);
+                }
+                denyList.add(key, voidedAt, "REVOKED");
+                jdbc.update("""
+                        INSERT INTO certificates (issuer_key_hash, serial_number, device_id, cert_thumbprint_s256,
+                                                  cert_pem, not_before, not_after, status, revocation_reason, revoked_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 'REVOKED', 'REPLACED_BEFORE_USE', ?)
+                        ON CONFLICT (issuer_key_hash, serial_number) DO NOTHING
+                        """, key.issuerKeyHash(), key.serial(), deviceId, x5tS256(encoded(signedOrNull)),
+                        Pems.certificate(signedOrNull), Timestamp.from(signedOrNull.getNotBefore().toInstant()),
+                        Timestamp.from(signedOrNull.getNotAfter().toInstant()), Timestamp.from(voidedAt));
+            }
+        });
+        crls.revocationCommitted(claim.reserved().issuerKeyHash());
     }
 
     /** Returns a Claim, or an EnrollmentResult to return immediately. Runs inside Tx 1. */
     private Object claim(EnrollRequest req) {
-        List<UUID> tokens = jdbc.queryForList("""
-                SELECT token_id FROM device_bootstrap_tokens
+        List<Map<String, Object>> tokens = jdbc.queryForList("""
+                SELECT token_id, status::text AS status FROM device_bootstrap_tokens
                  WHERE device_id = ? AND token_hash = ? AND expires_at > NOW()
                    AND (status = 'ISSUED' OR (status = 'CLAIMING' AND claimed_at < NOW() - INTERVAL '2 minutes'))
                  FOR UPDATE
-                """, UUID.class, req.deviceId(), tokenHash(req.bootstrapToken()));
+                """, req.deviceId(), tokenHash(req.bootstrapToken()));
         if (tokens.isEmpty()) {
             return EnrollmentResult.error(401, "INVALID_BOOTSTRAP");
         }
-        UUID tokenId = tokens.get(0);
+        UUID tokenId = (UUID) tokens.get(0).get("token_id");
+        if ("CLAIMING".equals(tokens.get(0).get("status"))) {
+            // Stale reclaim: whatever the previous claimant reserved more than 2 minutes ago is void (DECISIONS #38).
+            for (CertKey voided : ledger.sweepStale()) {
+                denyList.add(voided, clock.instant(), "REVOKED");
+            }
+        }
         jdbc.update("UPDATE device_bootstrap_tokens SET status = 'CLAIMING', claimed_at = NOW() WHERE token_id = ?",
                 tokenId);
 
@@ -182,14 +266,27 @@ public class EnrollmentService {
                     tokenId);
             return EnrollmentResult.error(409, "DEVICE_UNASSIGNED");
         }
+        String issuerKeyHash = issuers.requireActive(KeyPurpose.DEVICE_INTERMEDIATE).issuerKeyHash();
+        BigInteger serial = ledger.reserve(issuerKeyHash, req.deviceId());
         return new Claim(tokenId, (String) assignment.get(0).get("id"),
-                ((Timestamp) assignment.get(0).get("active_from")).toInstant());
+                ((Timestamp) assignment.get(0).get("active_from")).toInstant(),
+                CertKey.of(issuerKeyHash, SerialNumbers.toHex(serial)), serial);
     }
 
     private EnrollmentResult activate(EnrollRequest req, Claim claim, X509Certificate cert, String dekAnchorSig,
                                       Instant provisionedAt) {
         long storedEpoch = jdbc.queryForObject(
                 "SELECT boot_epoch FROM devices WHERE device_id = ? FOR UPDATE", Long.class, req.deviceId());
+        String tokenStatus = jdbc.queryForObject(
+                "SELECT status::text FROM device_bootstrap_tokens WHERE token_id = ? FOR UPDATE", String.class,
+                claim.tokenId());
+        if (!"CLAIMING".equals(tokenStatus)) {
+            throw new ActivationSuperseded("token is " + tokenStatus);
+        }
+        CertKey newKey = CertKey.from(cert);
+        if (!newKey.equals(claim.reserved()) || !ledger.record(newKey)) {
+            throw new ActivationSuperseded("serial reservation no longer RESERVED");
+        }
 
         List<Map<String, Object>> prior = jdbc.queryForList(
                 "SELECT issuer_key_hash, serial_number, status::text AS status FROM certificates WHERE device_id = ?",
@@ -221,7 +318,6 @@ public class EnrollmentService {
                 dekAnchorSig, Timestamp.from(provisionedAt), counters.bootEpoch(), counters.lastSequenceNum(),
                 counters.replayBitmap(), req.deviceId());
 
-        CertKey newKey = CertKey.from(cert);
         byte[] der = encoded(cert);
         jdbc.update("""
                 INSERT INTO certificates (issuer_key_hash, serial_number, device_id, cert_thumbprint_s256, cert_pem,
@@ -235,7 +331,7 @@ public class EnrollmentService {
                  WHERE token_id = ? AND status = 'CLAIMING'
                 """, claim.tokenId());
         if (consumed != 1) {
-            throw new IllegalStateException("bootstrap token was reclaimed during enrollment");
+            throw new ActivationSuperseded("token was reclaimed during enrollment");
         }
         log.info("Enrolled {}: serial {} boot_epoch {} (superseded {})", req.deviceId(), newKey.serial(),
                 counters.bootEpoch(), superseded.size());
@@ -243,11 +339,11 @@ public class EnrollmentService {
                 claim.assignmentActiveFrom().toString(), superseded);
     }
 
-    private void setTokenStatus(UUID tokenId, String status) {
-        tx.executeWithoutResult(s -> jdbc.update(
-                "UPDATE device_bootstrap_tokens SET status = ?::token_status, claimed_at = CASE WHEN ? = 'ISSUED' "
+    /** Inside a transaction: CLAIMING to {@code status} (no-op if someone else already moved the token on). */
+    private void setTokenStatusInTx(UUID tokenId, String status) {
+        jdbc.update("UPDATE device_bootstrap_tokens SET status = ?::token_status, claimed_at = CASE WHEN ? = 'ISSUED' "
                         + "THEN NULL ELSE claimed_at END WHERE token_id = ? AND status = 'CLAIMING'",
-                status, status, tokenId));
+                status, status, tokenId);
     }
 
     /** Lowercase hex SHA-256 of the token's ASCII bytes (the stored token_hash). */

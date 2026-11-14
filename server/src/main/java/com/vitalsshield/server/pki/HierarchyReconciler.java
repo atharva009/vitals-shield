@@ -108,6 +108,8 @@ public class HierarchyReconciler {
                         arn, purpose.name()));
 
                 jdbc.update("UPDATE ca_issuers SET status = 'REVOKED' WHERE status <> 'REVOKED'");
+                // Reservations under the old issuers can never be activated now (DECISIONS #38).
+                jdbc.update("UPDATE issued_serials SET status = 'VOIDED', voided_at = NOW() WHERE status = 'RESERVED'");
                 insertIssuer(root, created.get(KeyPurpose.ROOT_CA));
                 insertIssuer(deviceInt, created.get(KeyPurpose.DEVICE_INTERMEDIATE));
                 insertIssuer(serverCa, created.get(KeyPurpose.SERVER_TLS_CA));

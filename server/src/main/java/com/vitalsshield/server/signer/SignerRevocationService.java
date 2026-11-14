@@ -79,6 +79,41 @@ public class SignerRevocationService {
         });
     }
 
+    /** Result of revoking every live certificate of a device. */
+    public record BulkRevocation(String deviceId, List<CertKey> keys, int channelsClosed) {
+    }
+
+    /**
+     * Revokes every ACTIVE, ISSUED_PENDING_USE, or RENEWED certificate of {@code deviceId}: all keys deny-listed at
+     * one instant first, then one transaction updates the rows, then every channel is closed in parallel and the
+     * returned Mono completes when all close futures have. CRL republication is triggered after.
+     */
+    public Mono<BulkRevocation> revokeAllForDevice(String deviceId, String reason) {
+        return Mono.fromCallable(() -> {
+                    List<CertKey> keys = jdbc.query("""
+                            SELECT issuer_key_hash, serial_number FROM certificates
+                             WHERE device_id = ? AND status IN ('ACTIVE', 'ISSUED_PENDING_USE', 'RENEWED')
+                            """, (rs, i) -> CertKey.of(rs.getString(1), rs.getString(2)), deviceId);
+                    Instant revokedAt = clock.instant();
+                    keys.forEach(k -> denyList.add(k, revokedAt, "REVOKED")); // before the DB write: fail closed
+                    tx.executeWithoutResult(status -> jdbc.update("""
+                            UPDATE certificates
+                               SET status = 'REVOKED', revoked_at = ?, revocation_reason = ?
+                             WHERE device_id = ? AND status IN ('ACTIVE', 'ISSUED_PENDING_USE', 'RENEWED')
+                            """, Timestamp.from(revokedAt), reason, deviceId));
+                    return keys;
+                })
+                .subscribeOn(Schedulers.boundedElastic())
+                .flatMap(keys -> (eviction.enabled()
+                        ? reactor.core.publisher.Flux.fromIterable(keys)
+                                .flatMap(sessions::evictByCert)
+                                .reduce(0, Integer::sum)
+                        : Mono.just(0))
+                        .map(closed -> new BulkRevocation(deviceId, keys, closed)))
+                .doOnNext(r -> r.keys().stream().map(CertKey::issuerKeyHash).distinct()
+                        .forEach(crls::revocationCommitted));
+    }
+
     /** Most recent results, newest first (at most 50). */
     public List<RevocationResult> recentResults() {
         return new ArrayList<>(recent);

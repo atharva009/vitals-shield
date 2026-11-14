@@ -104,6 +104,13 @@ public final class SimulatorStateStore {
         return next;
     }
 
+    /** Stores a new assignment after the server answers 409 ASSIGNMENT_CHANGED. */
+    public void updateAssignment(String assignmentId, String activeFrom) {
+        SimulatorState s = SimulatorState.fromJson(read(stateFile()));
+        writeAtomic(stateFile(), new SimulatorState(s.deviceId(), s.bootEpoch(), s.sequenceNumber(), assignmentId,
+                activeFrom, s.enrolledAt()).toJson(), false);
+    }
+
     /** Erases the state partition only; keys/dek.key survives. */
     public void resetState() {
         deleteTree(stateDir);

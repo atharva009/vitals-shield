@@ -127,6 +127,20 @@ public final class MtlsTestClient {
             out.write(("GET " + path + " HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n")
                     .getBytes(StandardCharsets.US_ASCII));
             out.flush();
+            return readResponse();
+        }
+
+        /** POST over this (kept-alive) connection. */
+        public Response post(String path, String contentType, String body) throws IOException {
+            byte[] b = body.getBytes(StandardCharsets.UTF_8);
+            out.write(("POST " + path + " HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\nContent-Type: "
+                    + contentType + "\r\nContent-Length: " + b.length + "\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+            out.write(b);
+            out.flush();
+            return readResponse();
+        }
+
+        private Response readResponse() throws IOException {
             String statusLine = readLine();
             if (statusLine == null) {
                 throw new EOFException("connection closed before a response");

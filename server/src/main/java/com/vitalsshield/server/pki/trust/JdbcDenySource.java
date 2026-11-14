@@ -21,7 +21,7 @@ public class JdbcDenySource implements DenySource {
 
     @Override
     public List<DenyRow> load() {
-        return jdbc.query("""
+        List<DenyRow> rows = new java.util.ArrayList<>(jdbc.query("""
                 SELECT issuer_key_hash, serial_number, status::text AS status, revoked_at, grace_expires_at
                   FROM certificates
                  WHERE status IN ('REVOKED', 'EXPIRED', 'RENEWED')
@@ -30,7 +30,19 @@ public class JdbcDenySource implements DenySource {
                 CertKey.of(rs.getString("issuer_key_hash"), rs.getString("serial_number")),
                 rs.getString("status"),
                 instant(rs.getTimestamp("revoked_at")),
-                instant(rs.getTimestamp("grace_expires_at"))));
+                instant(rs.getTimestamp("grace_expires_at")))));
+        return addVoidedSerials(rows);
+    }
+
+    /** VOIDED ledger serials (DECISIONS #38): signed or possibly signed, never activated; denied from voided_at. */
+    private List<DenyRow> addVoidedSerials(List<DenyRow> rows) {
+        rows.addAll(jdbc.query("""
+                SELECT issuer_key_hash, serial_number, voided_at FROM issued_serials
+                 WHERE status = 'VOIDED' AND reserved_at > NOW() - INTERVAL '2 days'
+                """, (rs, i) -> new DenyRow(
+                CertKey.of(rs.getString("issuer_key_hash"), rs.getString("serial_number")),
+                "VOIDED", instant(rs.getTimestamp("voided_at")), null)));
+        return rows;
     }
 
     private static Instant instant(Timestamp ts) {

@@ -97,7 +97,7 @@ class PkiOpensslIT {
         write("server-ca.pem", serverCa.certPem());
         write("gateway-leaf.pem", Pems.certificate(gatewayTls.certificateChain().get(0)));
 
-        X509Certificate leaf = issuer.issueDeviceLeaf("dev_wearable_019", localSpki(), Duration.ofHours(12));
+        X509Certificate leaf = issuer.issueDeviceLeaf("dev_wearable_019", localSpki(), Duration.ofHours(12), new com.vitalsshield.server.pki.SerialAllocator().next());
         write("device-leaf.pem", Pems.certificate(leaf));
         write("intermediate-crl.pem", crls.publishIntermediateCrl().pem());
         write("root-crl.pem", crls.publishRootCrl().pem());
@@ -140,7 +140,7 @@ class PkiOpensslIT {
         BigInteger before = crlNumber(Files.readString(out.resolve("intermediate-crl.pem")));
         CaIssuer deviceInt = issuers.requireActive(KeyPurpose.DEVICE_INTERMEDIATE);
 
-        X509Certificate leaf = issuer.issueDeviceLeaf("dev_revoked_01", localSpki(), Duration.ofHours(12));
+        X509Certificate leaf = issuer.issueDeviceLeaf("dev_revoked_01", localSpki(), Duration.ofHours(12), new com.vitalsshield.server.pki.SerialAllocator().next());
         BigInteger serial = leaf.getSerialNumber();
         jdbc.update("INSERT INTO devices (device_id, hardware_model) VALUES ('dev_revoked_01', 'sim-v1')");
         jdbc.update("""

@@ -1,5 +1,6 @@
 package com.vitalsshield.server.pki;
 
+import java.math.BigInteger;
 import java.security.PublicKey;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
@@ -16,12 +17,18 @@ import reactor.core.scheduler.Schedulers;
  */
 public interface CertificateIssuer {
 
-    X509Certificate issueDeviceLeaf(String deviceId, SubjectPublicKeyInfo spki, Duration ttl);
+    /**
+     * Signs a device leaf with a serial the caller has already reserved in issued_serials (DECISIONS #38), so the
+     * CA never signs a serial it has not recorded.
+     */
+    X509Certificate issueDeviceLeaf(String deviceId, SubjectPublicKeyInfo spki, Duration ttl, BigInteger serial);
 
     X509Certificate issueGatewayLeaf(PublicKey key, Duration ttl);
 
-    default Mono<X509Certificate> issueDeviceLeafAsync(String deviceId, SubjectPublicKeyInfo spki, Duration ttl) {
-        return Mono.fromCallable(() -> issueDeviceLeaf(deviceId, spki, ttl)).subscribeOn(Schedulers.boundedElastic());
+    default Mono<X509Certificate> issueDeviceLeafAsync(String deviceId, SubjectPublicKeyInfo spki, Duration ttl,
+                                                       BigInteger serial) {
+        return Mono.fromCallable(() -> issueDeviceLeaf(deviceId, spki, ttl, serial))
+                .subscribeOn(Schedulers.boundedElastic());
     }
 
     default Mono<X509Certificate> issueGatewayLeafAsync(PublicKey key, Duration ttl) {

@@ -63,12 +63,15 @@ public class CrlService {
     private final TransactionTemplate tx;
     private final CaIssuerRepository issuers;
     private final KmsSigner kmsSigner;
+    private final PkiProperties pki;
     private final Clock clock = Clock.systemUTC();
     private final CrlSlot intermediateSlot;
     private final CrlSlot rootSlot;
     private volatile Disposable expiryWatch;
 
-    public CrlService(JdbcTemplate jdbc, TransactionTemplate tx, CaIssuerRepository issuers, KmsSigner kmsSigner) {
+    public CrlService(JdbcTemplate jdbc, TransactionTemplate tx, CaIssuerRepository issuers, KmsSigner kmsSigner,
+                      PkiProperties pki) {
+        this.pki = pki;
         this.jdbc = jdbc;
         this.tx = tx;
         this.issuers = issuers;
@@ -286,7 +289,30 @@ public class CrlService {
         }
     }
 
+    /**
+     * REVOKED certificates of this issuer that have not expired, plus VOIDED ledger serials (DECISIONS #38) reserved
+     * recently enough that a signed leaf could still be valid (leaf TTL + 1 h). A serial in both appears once.
+     */
     private List<Entry> leafEntries(CaIssuer ca, Instant now) {
+        java.util.Map<BigInteger, Entry> bySerial = new java.util.LinkedHashMap<>();
+        for (Entry e : revokedCertificates(ca, now)) {
+            bySerial.putIfAbsent(e.serial(), e);
+        }
+        Instant cutoff = now.minus(pki.deviceLeafTtl()).minus(Duration.ofHours(1));
+        jdbc.query("""
+                SELECT serial_number, voided_at FROM issued_serials
+                 WHERE issuer_key_hash = ? AND status = 'VOIDED' AND reserved_at > ?
+                 ORDER BY voided_at, serial_number
+                """, rs -> {
+            BigInteger serial = SerialNumbers.fromHex(rs.getString("serial_number"));
+            Timestamp voided = rs.getTimestamp("voided_at");
+            bySerial.putIfAbsent(serial, new Entry(serial, voided == null ? now : voided.toInstant(),
+                    CRLReason.superseded));
+        }, ca.issuerKeyHash(), Timestamp.from(cutoff));
+        return new ArrayList<>(bySerial.values());
+    }
+
+    private List<Entry> revokedCertificates(CaIssuer ca, Instant now) {
         return jdbc.query("""
                         SELECT serial_number, revoked_at, revocation_reason
                           FROM certificates

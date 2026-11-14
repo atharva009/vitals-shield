@@ -101,6 +101,81 @@ public final class Simulator {
                 .get(config.mtlsUrl().resolve("/api/v1/telemetry/ping"));
     }
 
+    /**
+     * Streaming mode: one signed batch every {@code intervalMs} ({@code count} batches, 0 = forever). The sequence
+     * number is persisted before each send (write-ahead). Returns the process exit code (0 done, 3 refused/forbidden).
+     */
+    public int stream(long intervalMs, long count, java.io.PrintStream out) throws InterruptedException {
+        SimulatorStateStore.Enrollment e = store.load()
+                .orElseThrow(() -> new IllegalStateException("not enrolled: run enroll first"));
+        if (!e.olkCert().getNotAfter().toInstant().isAfter(clock.instant())) {
+            throw new IllegalStateException("stored certificate has expired: enroll again");
+        }
+        byte[] certDer;
+        try {
+            certDer = e.olkCert().getEncoded();
+        } catch (java.security.cert.CertificateEncodingException ex) {
+            throw new IllegalStateException(ex);
+        }
+        GatewayClient client = GatewayClient.mtlsClient(config.trustFile(), e.olkKey(), e.olkCert());
+        URI ingest = config.mtlsUrl().resolve("/api/v1/telemetry/ingest");
+        java.util.Random rnd = new java.util.Random();
+        long lastOkSeq = 0;
+        long lastOkAt = System.nanoTime();
+
+        for (long sent = 0; count == 0 || sent < count; sent++) {
+            long seq = store.incrementSequence();             // persisted before use
+            SimulatorState state = store.load().orElseThrow().state();
+            java.util.UUID batchId = java.util.UUID.randomUUID();
+            Instant now = clock.instant();
+            byte[] payload = TelemetryFrames.payload(config.deviceId(), state.assignmentId(), state.bootEpoch(), seq,
+                    batchId, now, now, TelemetryFrames.Metrics.resting(rnd));
+            String jws = com.vitalsshield.crypto.TelemetryJws.sign(payload, e.olkKey(), certDer);
+
+            while (true) {                                    // same frame until it is answered (DECISIONS #44)
+                long t0 = System.nanoTime();
+                GatewayClient.Response r;
+                try {
+                    r = client.postJose(ingest, jws);
+                } catch (IOException io) {
+                    if (GatewayClient.isHandshakeRefused(io)) {
+                        out.println("REJECTED handshake_refused last_ok_seq=" + lastOkSeq + " ms_since_last_ok="
+                                + (System.nanoTime() - lastOkAt) / 1_000_000);
+                        return 3;
+                    }
+                    Thread.sleep(1000);                       // broken connection: the client reconnects on retry
+                    continue;
+                }
+                long rtt = (System.nanoTime() - t0) / 1_000_000;
+                boolean idempotent = r.body() != null && r.body().contains("\"idempotent_retry\":true");
+                out.println("SENT seq=" + seq + " batch=" + batchId.toString().substring(0, 8) + " status=" + r.status()
+                        + " rtt_ms=" + rtt + (idempotent ? " idempotent" : ""));
+                if (r.status() == 503) {
+                    Thread.sleep(1000L * r.headers().firstValue("Retry-After").map(Long::parseLong).orElse(1L));
+                    continue;
+                }
+                if (r.status() == 200) {
+                    lastOkSeq = seq;
+                    lastOkAt = System.nanoTime();
+                } else if (r.status() == 403) {
+                    out.println(r.body());
+                    return 3;
+                } else if (r.status() == 409 && r.body() != null && r.body().contains("ASSIGNMENT_CHANGED")) {
+                    Map<String, Object> json = parse(r.body());
+                    store.updateAssignment((String) json.get("current_assignment_id"),
+                            (String) json.get("assignment_active_from"));
+                } else if (r.status() != 409) {
+                    out.println(r.body());
+                }
+                break;
+            }
+            if (intervalMs > 0 && (count == 0 || sent + 1 < count)) {
+                Thread.sleep(intervalMs);
+            }
+        }
+        return 0;
+    }
+
     private static Map<String, Object> parse(String json) {
         try {
             return JSONObjectUtils.parse(json);

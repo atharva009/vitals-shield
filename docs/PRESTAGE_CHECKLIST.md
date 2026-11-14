@@ -8,4 +8,7 @@ Run through this before the demo slot. Later phases append to it.
       revokes every device.
 - [ ] Run `./gradlew clean build` before the final boot.
 - [ ] Restart the server within 24 h of the slot (gateway TLS cert lifetime).
-- [ ] Confirm `GET /api/v1/admin/boot-status` lists all six steps.
+- [ ] Confirm `GET /api/v1/admin/boot-status` lists all eight steps (RECONCILED, SERIALS_SWEPT, GATEWAY_TLS_ISSUED,
+      TRUST_ANCHORS_LOADED, DENY_LIST_SEEDED, CRLS_PUBLISHED, ADMIN_CODE_ISSUED, LISTENERS_BOUND).
+- [ ] Read the admin bearer from `var/admin/setup-code` (mode 600, regenerated every boot); never paste it into slides.
+- [ ] Do not run `./gradlew drillTest` after the final boot: it restarts LocalStack and wipes the KMS keys.

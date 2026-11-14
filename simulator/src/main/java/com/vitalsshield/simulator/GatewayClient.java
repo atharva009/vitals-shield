@@ -58,6 +58,29 @@ public final class GatewayClient {
         return new Response(r.statusCode(), r.body(), r.headers());
     }
 
+    /** POST a compact JWS (Content-Type application/jose) over this client's persistent connection. */
+    public Response postJose(URI uri, String compactJws) throws IOException, InterruptedException {
+        HttpResponse<String> r = http.send(HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(15))
+                        .header("Content-Type", "application/jose")
+                        .POST(HttpRequest.BodyPublishers.ofString(compactJws, StandardCharsets.US_ASCII)).build(),
+                HttpResponse.BodyHandlers.ofString());
+        return new Response(r.statusCode(), r.body(), r.headers());
+    }
+
+    /** True if {@code e} (or a cause) is a TLS-level refusal: a handshake failure or a fatal alert from the server. */
+    public static boolean isHandshakeRefused(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof javax.net.ssl.SSLHandshakeException) {
+                return true;
+            }
+            if (t instanceof javax.net.ssl.SSLException && t.getMessage() != null
+                    && t.getMessage().toLowerCase(java.util.Locale.ROOT).contains("alert")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static HttpClient build(SSLContext ctx) {
         SSLParameters params = new SSLParameters();
         params.setProtocols(new String[] {"TLSv1.3"});

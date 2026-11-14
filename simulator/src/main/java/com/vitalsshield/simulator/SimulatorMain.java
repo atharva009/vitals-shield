@@ -12,6 +12,7 @@ import java.util.Map;
  * <pre>
  * simulator enroll --device-id X --token T [--state-dir D] [--trust-file F] [--public-url U] [--mtls-url U]
  * simulator ping [--device-id X] [...]
+ * simulator run [--device-id X] [--interval-ms 1000] [--count N, 0 = forever] [...]
  * simulator reset-state [--device-id X] [--state-dir D]
  * simulator factory-wipe [--device-id X] [--state-dir D]
  * </pre>
@@ -30,8 +31,8 @@ public final class SimulatorMain {
     /** Entry point usable in-process (tests). Returns the exit code. */
     public static int run(String[] args, PrintStream out, PrintStream err) {
         if (args.length == 0) {
-            err.println("usage: simulator <enroll|ping|reset-state|factory-wipe> [--device-id X] [--token T] "
-                    + "[--state-dir D] [--trust-file F] [--public-url U] [--mtls-url U]");
+            err.println("usage: simulator <enroll|ping|run|reset-state|factory-wipe> [--device-id X] [--token T] "
+                    + "[--interval-ms MS] [--count N] [--state-dir D] [--trust-file F] [--public-url U] [--mtls-url U]");
             return 2;
         }
         Map<String, String> opts;
@@ -77,6 +78,10 @@ public final class SimulatorMain {
                     GatewayClient.Response r = sim.ping();
                     out.println(r.status() + " " + r.body());
                     return r.status() == 200 ? 0 : 1;
+                }
+                case "run" -> {
+                    return sim.stream(Long.parseLong(opts.getOrDefault("interval-ms", "1000")),
+                            Long.parseLong(opts.getOrDefault("count", "0")), out);
                 }
                 case "reset-state" -> {
                     sim.store().resetState();

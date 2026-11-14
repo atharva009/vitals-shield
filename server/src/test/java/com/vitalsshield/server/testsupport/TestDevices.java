@@ -33,7 +33,8 @@ public final class TestDevices {
             g.initialize(new ECGenParameterSpec("secp256r1"));
             KeyPair kp = g.generateKeyPair();
             X509Certificate cert = ctx.getBean(CertificateIssuer.class).issueDeviceLeaf(deviceId,
-                    SubjectPublicKeyInfo.getInstance(kp.getPublic().getEncoded()), Duration.ofHours(12));
+                    SubjectPublicKeyInfo.getInstance(kp.getPublic().getEncoded()), Duration.ofHours(12),
+                    ctx.getBean(com.vitalsshield.server.pki.SerialAllocator.class).next());
             X509Certificate deviceInt = ctx.getBean(TrustAnchors.class).deviceIntermediate();
             return new Leaf(deviceId, kp, cert, CertKey.from(cert), List.of(cert, deviceInt));
         } catch (java.security.GeneralSecurityException e) {
@@ -62,6 +63,9 @@ public final class TestDevices {
         } catch (java.security.GeneralSecurityException e) {
             throw new IllegalStateException(e);
         }
+        // Keep the ledger invariant (DECISIONS #38): every certificates row has a RECORDED issued_serials row.
+        jdbc.update("INSERT INTO issued_serials (issuer_key_hash, serial_number, device_id, status) "
+                + "VALUES (?, ?, ?, 'RECORDED')", leaf.key().issuerKeyHash(), leaf.key().serial(), deviceId);
         return leaf;
     }
 }

@@ -118,6 +118,7 @@ public class CertificateDenyList implements DisposableBean {
             switch (row.status()) {
                 case "REVOKED" -> add(row.key(), row.revokedAt() == null ? Instant.EPOCH : row.revokedAt(), "REVOKED");
                 case "EXPIRED" -> add(row.key(), Instant.EPOCH, "EXPIRED");
+                case "VOIDED" -> add(row.key(), row.revokedAt() == null ? Instant.EPOCH : row.revokedAt(), "REVOKED");
                 case "RENEWED" -> add(row.key(),
                         row.graceExpiresAt() == null ? Instant.EPOCH : row.graceExpiresAt(), "SUPERSEDED");
                 default -> log.warn("Ignoring deny row with status {}", row.status());

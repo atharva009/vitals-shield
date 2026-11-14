@@ -114,12 +114,19 @@ public final class CertificateProfiles {
      */
     public X509Certificate deviceLeaf(String deviceId, SubjectPublicKeyInfo spki, X509Certificate intermediate,
                                       Duration ttl, ContentSigner intermediateSigner) {
+        return deviceLeaf(deviceId, spki, intermediate, ttl, intermediateSigner, SerialNumbers.random(random));
+    }
+
+    /** Device leaf with a caller-supplied serial, already reserved in issued_serials (DECISIONS #38). */
+    public X509Certificate deviceLeaf(String deviceId, SubjectPublicKeyInfo spki, X509Certificate intermediate,
+                                      Duration ttl, ContentSigner intermediateSigner, BigInteger serial) {
         if (deviceId == null || !DEVICE_ID.matcher(deviceId).matches()) {
             throw new IllegalArgumentException("device_id must match " + DEVICE_ID.pattern());
         }
         Instant notBefore = notBefore();
         X509v3CertificateBuilder b = builder(subjectOf(intermediate),
-                name("CN=" + deviceId + ", O=" + DEVICE_LEAF_ORG), notBefore, notBefore.plus(positive(ttl)), spki);
+                name("CN=" + deviceId + ", O=" + DEVICE_LEAF_ORG), notBefore, notBefore.plus(positive(ttl)), spki,
+                requireValidSerial(serial));
         add(b, Extension.basicConstraints, true, new BasicConstraints(false));
         add(b, Extension.keyUsage, true, new KeyUsage(KeyUsage.digitalSignature));
         add(b, Extension.extendedKeyUsage, true, new ExtendedKeyUsage(KeyPurposeId.id_kp_clientAuth));
@@ -188,8 +195,20 @@ public final class CertificateProfiles {
 
     private X509v3CertificateBuilder builder(X500Name issuer, X500Name subject, Instant notBefore, Instant notAfter,
                                              SubjectPublicKeyInfo spki) {
-        BigInteger serial = SerialNumbers.random(random);
+        return builder(issuer, subject, notBefore, notAfter, spki, SerialNumbers.random(random));
+    }
+
+    private static X509v3CertificateBuilder builder(X500Name issuer, X500Name subject, Instant notBefore,
+                                                    Instant notAfter, SubjectPublicKeyInfo spki, BigInteger serial) {
         return new X509v3CertificateBuilder(issuer, serial, Date.from(notBefore), Date.from(notAfter), subject, spki);
+    }
+
+    /** RFC 5280: positive, at most 20 octets. */
+    private static BigInteger requireValidSerial(BigInteger serial) {
+        if (serial == null || serial.signum() <= 0 || serial.toByteArray().length > 20) {
+            throw new IllegalArgumentException("serial must be positive and at most 20 octets");
+        }
+        return serial;
     }
 
     /** Builds, converts and verifies the signature against the expected issuer key (catches a wrong KMS key). */

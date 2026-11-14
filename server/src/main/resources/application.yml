@@ -31,3 +31,6 @@ vitalsshield:
     admin-port: 8445
   eviction:
     enabled: true
+  admin:
+    # Boot-generated bearer code for /api/v1/admin/** until WebAuthn (DECISIONS #41). Mode 600.
+    setup-code-file: var/admin/setup-code

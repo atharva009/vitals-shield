@@ -67,7 +67,14 @@ import software.amazon.awssdk.services.kms.KmsClient;
 @ActiveProfiles("local")
 @SpringBootTest
 @Import(EnrollmentIT.FlakyKms.class)
+@org.junit.jupiter.api.TestInstance(org.junit.jupiter.api.TestInstance.Lifecycle.PER_CLASS)
 class EnrollmentIT {
+
+    /** DECISIONS #38: after every enrollment path in this class, no certificate is missing from the ledger. */
+    @org.junit.jupiter.api.AfterAll
+    void ledgerInvariantHolds() {
+        assertThat(com.vitalsshield.server.testsupport.LedgerInvariant.violations(jdbc)).isZero();
+    }
 
     @Container
     @ServiceConnection
