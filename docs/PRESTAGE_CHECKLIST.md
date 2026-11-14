@@ -12,3 +12,9 @@ Run through this before the demo slot. Later phases append to it.
       TRUST_ANCHORS_LOADED, DENY_LIST_SEEDED, CRLS_PUBLISHED, ADMIN_CODE_ISSUED, LISTENERS_BOUND).
 - [ ] Read the admin bearer from `var/admin/setup-code` (mode 600, regenerated every boot); never paste it into slides.
 - [ ] Do not run `./gradlew drillTest` after the final boot: it restarts LocalStack and wipes the KMS keys.
+- [ ] Build the simulator binary with `./gradlew :simulator:installDist` and drive the demo with
+      `simulator/build/install/simulator/bin/simulator` (or `scripts/demo-cli.sh`), run from the repo root. Never use
+      `./gradlew :simulator:run` on stage: the simulator's designed exit code 3 after quarantine makes Gradle print
+      `BUILD FAILED`.
+- [ ] Build the dashboard (`cd dashboard && npm ci && npm run build`) and open `http://127.0.0.1:8445/` once to
+      confirm it loads and signs in.

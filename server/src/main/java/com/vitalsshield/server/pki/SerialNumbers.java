@@ -8,6 +8,9 @@ public final class SerialNumbers {
 
     private static final int SERIAL_BYTES = 20;
 
+    /** Random bits per serial: 20 bytes with the top bit cleared. */
+    public static final int RANDOM_BITS = SERIAL_BYTES * 8 - 1;
+
     private SerialNumbers() {
     }
 

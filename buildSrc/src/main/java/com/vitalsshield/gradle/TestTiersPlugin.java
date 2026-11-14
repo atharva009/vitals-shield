@@ -24,7 +24,7 @@ import org.gradle.jvm.toolchain.JavaLanguageVersion;
  *
  * <ul>
  *   <li>{@code test}: everything except tags {@code integration}, {@code e2e}, {@code drill}</li>
- *   <li>{@code integrationTest}, {@code e2eTest}, {@code drillTest}: exactly one tag each</li>
+ *   <li>{@code integrationTest}, {@code e2eTest}, {@code drillTest}: exactly one tag each, never up to date</li>
  * </ul>
  */
 public class TestTiersPlugin implements Plugin<Project> {
@@ -90,6 +90,9 @@ public class TestTiersPlugin implements Plugin<Project> {
             task.setClasspath(testSourceSet.getRuntimeClasspath());
             task.useJUnitPlatform(junit -> junit.includeTags(tag));
             task.shouldRunAfter(project.getTasks().named("test"));
+            // These tiers depend on Docker, LocalStack, and database state that Gradle cannot see as inputs, so a
+            // passing run must never be reused as "up to date". The unit `test` task stays cacheable.
+            task.getOutputs().upToDateWhen(t -> false);
         });
     }
 }

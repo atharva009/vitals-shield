@@ -125,6 +125,11 @@ Gradle 9 changed the default so a test task can fail when it discovers zero test
 `failOnNoDiscoveredTests = false` so they pass while empty. (In practice `server:test`, which finds zero tests through
 its tag filter, passes without the setting; the setting is there so the empty tiers do not depend on that detail.)
 
+Changed in Phase 5a: `integrationTest`, `e2eTest`, and `drillTest` are never up to date
+(`outputs.upToDateWhen { false }` in `TestTiersPlugin`). Their results depend on Docker, LocalStack, and database
+state that Gradle cannot see as task inputs, so with unchanged code Gradle used to skip them as UP-TO-DATE and a
+regression gate could pass without running. The unit `test` task stays cacheable because it depends only on code.
+
 ### Testcontainers
 
 A library that starts a real Docker container from a test (here `postgres:16`), gives the test its JDBC URL, and

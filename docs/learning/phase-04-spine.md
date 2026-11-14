@@ -539,6 +539,19 @@ OpenSSL pads the 39-hex-digit serial with a leading `0`; we store it without lea
 
 ## 10. Judge Q&A
 
+**Q: How are your serial numbers generated?**
+A: `SerialAllocator` draws 20 bytes from the JDK's `SecureRandom` and clears the top bit (`SerialNumbers.random`), so
+every serial is positive, encodes in DER as an INTEGER of at most 20 octets (the RFC 5280 limit), and carries 159
+random bits, well above the 64 bits the CA/Browser Forum Baseline Requirements set for publicly trusted TLS
+certificates. Each serial is reserved in `issued_serials` before KMS signs anything. Serials are never sequential, so
+they reveal nothing about how many devices we enroll and cannot be predicted. That matters historically: the 2008 MD5
+collision attack (Sotirov, Stevens, and others) produced a rogue CA certificate because the attacked CA's serials and
+validity times were predictable, which let the attackers choose the exact bytes the CA would sign. `SerialAllocatorTest`
+(added in Phase 5a) draws 10,000 serials from the production constructor and checks the source is `SecureRandom`, all
+are positive, each DER INTEGER is at most 20 octets (BouncyCastle `ASN1Integer`), all are unique, no two consecutive
+ones differ by 1 and the sequence is not monotonic, the highest set bit is bit 158, and each of the 159 bit positions
+is set in 40% to 60% of the samples.
+
 **Q: Is every certificate your CA signed accounted for?**
 A: Every device leaf, yes. The serial is reserved in `issued_serials` as RESERVED inside the claim transaction, before
 any KMS call, so nothing is ever signed with an unrecorded serial. Activation marks it RECORDED in the same transaction

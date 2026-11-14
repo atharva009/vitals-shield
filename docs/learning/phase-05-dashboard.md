@@ -170,6 +170,13 @@ Details from `dashboard/app/page.tsx`:
 
 ![Live overview](img/phase-05-live.png)
 
+Clicking a device row opens its panel: the full serial in OpenSSL form, the `x5t#S256` thumbprint, the validity
+window, a heart-rate sparkline, and the 30 newest telemetry rows. The list spans boot epochs, so in the screenshot the
+struck-through QUARANTINED rows at the bottom are from the previous enrollment's quarantine, below the current
+epoch's ACCEPTED rows.
+
+![Selected device](img/phase-05-device.png)
+
 ### The quarantine button path
 
 ```mermaid

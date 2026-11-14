@@ -92,3 +92,20 @@ open http://127.0.0.1:8445/               # paste the contents of var/admin/setu
 If `dashboard/out` does not exist, `/` on 8445 answers `dashboard not built: run npm run build in dashboard/`. The
 directory is `vitalsshield.dashboard.dir`. For UI work, `npm run dev` serves on port 3000 and proxies `/api/*` to
 8445. Checks: `npm run typecheck`, `npm run lint`.
+
+## Simulator
+
+Build the binary once, then run it from the repo root (it resolves `simulator-state/` and `var/trust/root-ca.pem`
+relative to the current directory):
+
+```sh
+./gradlew :simulator:installDist
+simulator/build/install/simulator/bin/simulator enroll --device-id dev_wearable_019 --token <token>
+simulator/build/install/simulator/bin/simulator run --device-id dev_wearable_019
+```
+
+Demos use this binary, never `./gradlew :simulator:run`: after a quarantine the simulator exits with code 3 by design,
+and Gradle reports a non-zero exit as `BUILD FAILED`. `scripts/demo-cli.sh` runs the whole CLI demo (seed, enroll,
+stream, quarantine, CRL check); set `DEMO_QUARANTINE=ui` to click the dashboard button instead of using curl, and
+`DEMO_PAUSE` to change the 2 s pause between steps.
+
