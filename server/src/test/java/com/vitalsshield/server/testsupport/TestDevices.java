@@ -11,7 +11,6 @@ import java.security.cert.X509Certificate;
 import java.security.spec.ECGenParameterSpec;
 import java.sql.Timestamp;
 import java.time.Duration;
-import java.util.HexFormat;
 import java.util.List;
 import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo;
 import org.springframework.context.ApplicationContext;
@@ -54,7 +53,9 @@ public final class TestDevices {
                                               cert_pem, not_before, not_after, status)
                     VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE')
                     """, leaf.key().issuerKeyHash(), leaf.key().serial(), deviceId,
-                    HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(leaf.cert().getEncoded())),
+                    // DECISIONS #35: base64url(SHA-256(DER)), the JWS x5t#S256 value.
+                    java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(
+                            MessageDigest.getInstance("SHA-256").digest(leaf.cert().getEncoded())),
                     Pems.certificate(leaf.cert()),
                     Timestamp.from(leaf.cert().getNotBefore().toInstant()),
                     Timestamp.from(leaf.cert().getNotAfter().toInstant()));

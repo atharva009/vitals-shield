@@ -12,3 +12,8 @@ dependencies {
 application {
     mainClass = 'com.vitalsshield.simulator.SimulatorMain'
 }
+
+// Run from the repo root so ./simulator-state and var/trust/root-ca.pem resolve there.
+tasks.named('run') {
+    workingDir = rootProject.projectDir
+}

@@ -24,6 +24,7 @@ dependencies {
     implementation libs.bcpkix
     implementation libs.nimbus.jose.jwt
 
+    testImplementation project(':simulator')
     testImplementation libs.spring.boot.starter.webflux.test
     testImplementation libs.spring.boot.starter.jdbc.test
     testImplementation libs.spring.boot.starter.flyway.test
@@ -40,4 +41,13 @@ tasks.named('bootRun') {
 
 tasks.withType(Test).configureEach {
     systemProperty 'vitalsshield.repoRoot', rootProject.projectDir.absolutePath
+}
+
+// Dev-only seed tool (DECISIONS #32): runs from the test classpath against the local Compose database.
+tasks.register('seedDemoDevice', JavaExec) {
+    group = 'vitalsshield'
+    description = 'Seeds a demo device, ACTIVE assignment and bootstrap token in the local Compose Postgres.'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.vitalsshield.devtools.SeedDemoDevice'
+    javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
 }

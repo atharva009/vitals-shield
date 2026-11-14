@@ -5,6 +5,7 @@ import java.net.Socket;
 import java.security.GeneralSecurityException;
 import java.security.cert.CertPath;
 import java.security.cert.CertPathValidator;
+import java.security.cert.CertPathValidatorException;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.PKIXParameters;
@@ -105,7 +106,9 @@ public class DynamicMtlsTrustManager extends X509ExtendedTrustManager {
             params.setDate(Date.from(now));
             CertPathValidator.getInstance("PKIX").validate(path, params);
         } catch (GeneralSecurityException e) {
-            throw reject("PKIX validation failed: " + e.getMessage(), serial, akiHex(leaf));
+            // Keep the CertPathValidatorException (reason EXPIRED, NOT_YET_VALID, ...) as the cause so JSSE can pick a
+            // specific alert (DECISIONS #37).
+            throw reject("PKIX validation failed: " + e.getMessage(), serial, akiHex(leaf), e);
         }
 
         // 3. Leaf policy.
@@ -128,13 +131,20 @@ public class DynamicMtlsTrustManager extends X509ExtendedTrustManager {
         // 4. Deny-list.
         CertKey key = CertKey.from(leaf);
         if (denyList.isDenied(key, now)) {
-            throw reject("certificate is deny-listed", key.serial(), key.issuerKeyHash());
+            // Cause with reason REVOKED, so JSSE can send certificate_revoked (44) where it supports it (DECISIONS #37).
+            throw reject("certificate is deny-listed", key.serial(), key.issuerKeyHash(),
+                    new CertPathValidatorException("certificate is revoked", null, null, -1,
+                            CertPathValidatorException.BasicReason.REVOKED));
         }
     }
 
     private static CertificateException reject(String reason, String serial, String issuerHash) {
+        return reject(reason, serial, issuerHash, null);
+    }
+
+    private static CertificateException reject(String reason, String serial, String issuerHash, Throwable cause) {
         log.info("mTLS client certificate rejected: {} (serial={}, issuer_key_hash={})", reason, serial, issuerHash);
-        return new CertificateException(reason);
+        return cause == null ? new CertificateException(reason) : new CertificateException(reason, cause);
     }
 
     private static String akiHex(X509Certificate leaf) {

@@ -765,6 +765,17 @@ after:  localstack StartedAt=2026-11-13T23:51:39.815052583Z
 UNCHANGED
 ```
 
+### Changed in Phase 3: which alert a revoked client gets
+
+Phase 3 made `DynamicMtlsTrustManager` attach a `CertPathValidatorException` cause to its rejections (reason REVOKED
+for deny-listed certificates, PKIX's own EXPIRED or NOT_YET_VALID for validity failures), hoping JSSE would send alert
+44 (certificate_revoked) or 45 (certificate_expired) instead of 46. It does not: with JDK 21.0.13, a revoked client
+still receives `alert certificate unknown ... SSL alert number 46`. The reason is in the JDK source:
+`sun.security.ssl.CertificateMessage.checkClientCerts` (the server checking a client, both TLS 1.2 and 1.3 paths)
+always calls `fatal(Alert.CERTIFICATE_UNKNOWN, ce)`. The cause-to-alert mapping exists only on the client side,
+when a client checks a server. The cause chain stays in the code (DECISIONS #37); the client simply cannot tell
+"revoked" from "unknown", which also gives an attacker less information.
+
 ### Gotcha hit in Phase 2.1
 
 - **CRL Numbers are shared across processes; caches are not.** `MtlsListenerIT` starts extra servers against the same

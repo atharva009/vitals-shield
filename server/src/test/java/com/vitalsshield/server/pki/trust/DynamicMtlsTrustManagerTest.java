@@ -86,6 +86,10 @@ class DynamicMtlsTrustManagerTest {
         X509Certificate leaf = leaf("dev_expired");
         clock.set(leaf.getNotAfter().toInstant().plusSeconds(1));
         assertRejected(leaf);
+        assertThatThrownBy(() -> tm.checkClientTrusted(new X509Certificate[] {leaf}, "EC"))
+                .hasCauseInstanceOf(java.security.cert.CertPathValidatorException.class)
+                .satisfies(e -> assertThat(((java.security.cert.CertPathValidatorException) e.getCause()).getReason())
+                        .isEqualTo(java.security.cert.CertPathValidatorException.BasicReason.EXPIRED));
     }
 
     @Test
@@ -112,6 +116,10 @@ class DynamicMtlsTrustManagerTest {
         X509Certificate leaf = leaf("dev_denied");
         denyList.add(CertKey.from(leaf), NOW, "REVOKED");
         assertRejected(leaf);
+        assertThatThrownBy(() -> tm.checkClientTrusted(new X509Certificate[] {leaf}, "EC"))
+                .hasCauseInstanceOf(java.security.cert.CertPathValidatorException.class)
+                .satisfies(e -> assertThat(((java.security.cert.CertPathValidatorException) e.getCause()).getReason())
+                        .isEqualTo(java.security.cert.CertPathValidatorException.BasicReason.REVOKED));
     }
 
     @Test
