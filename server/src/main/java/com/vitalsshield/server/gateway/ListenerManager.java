@@ -3,6 +3,7 @@ package com.vitalsshield.server.gateway;
 import com.vitalsshield.server.pki.GatewayTlsMaterial;
 import com.vitalsshield.server.pki.trust.DynamicMtlsTrustManager;
 import io.netty.handler.ssl.ClientAuth;
+import io.netty.handler.ssl.SslContextBuilder;
 import java.net.InetSocketAddress;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
@@ -21,6 +22,7 @@ import reactor.netty.DisposableServer;
 import reactor.netty.http.Http11SslContextSpec;
 import reactor.netty.http.HttpProtocol;
 import reactor.netty.http.server.HttpServer;
+import reactor.netty.tcp.SslProvider;
 
 /**
  * Binds the three listeners. Only {@link com.vitalsshield.server.boot.BootSequence} calls {@link #bindAll()}, as its
@@ -113,18 +115,22 @@ public class ListenerManager implements DisposableBean {
         servers.clear();
     }
 
-    private Http11SslContextSpec sslSpec(ClientAuth clientAuth) {
+    /**
+     * Typed as GenericSslContextSpec so Reactor Netty uses the non-deprecated sslContext(GenericSslContextSpec)
+     * overload (ProtocolSslContextSpec extends it; the configuration is identical).
+     */
+    private SslProvider.GenericSslContextSpec<SslContextBuilder> sslSpec(ClientAuth clientAuth) {
         List<X509Certificate> chain = tls.certificateChain();
-        return Http11SslContextSpec.forServer(tls.privateKey(), chain.toArray(X509Certificate[]::new))
-                .configure(b -> {
-                    b.sslProvider(io.netty.handler.ssl.SslProvider.JDK)
-                            .protocols("TLSv1.3")
-                            .clientAuth(clientAuth)
-                            .sessionCacheSize(SESSION_CACHE_SIZE)
-                            .sessionTimeout(SESSION_TIMEOUT_SECONDS);
-                    if (clientAuth == ClientAuth.REQUIRE) {
-                        b.trustManager(trustManager);
-                    }
-                });
+        Http11SslContextSpec spec = Http11SslContextSpec.forServer(tls.privateKey(), chain.toArray(X509Certificate[]::new));
+        return spec.configure(b -> {
+            b.sslProvider(io.netty.handler.ssl.SslProvider.JDK)
+                    .protocols("TLSv1.3")
+                    .clientAuth(clientAuth)
+                    .sessionCacheSize(SESSION_CACHE_SIZE)
+                    .sessionTimeout(SESSION_TIMEOUT_SECONDS);
+            if (clientAuth == ClientAuth.REQUIRE) {
+                b.trustManager(trustManager);
+            }
+        });
     }
 }

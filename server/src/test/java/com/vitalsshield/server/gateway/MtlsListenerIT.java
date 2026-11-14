@@ -318,7 +318,7 @@ class MtlsListenerIT {
                 // Find the issuer by key ID (CRL AKI), never by DN.
                 String akiHex = HexFormat.of().formatHex(AuthorityKeyIdentifier.getInstance(
                         new X509CRLHolder(crl.getEncoded()).getExtension(Extension.authorityKeyIdentifier)
-                                .getParsedValue()).getKeyIdentifier());
+                                .getParsedValue()).getKeyIdentifierOctets());
                 String pem = jdbc.queryForObject("SELECT cert_pem FROM ca_issuers WHERE issuer_key_hash = ?",
                         String.class, akiHex);
                 X509Certificate issuer = com.vitalsshield.server.pki.Pems.parseCertificate(pem);

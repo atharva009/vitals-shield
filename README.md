@@ -51,6 +51,12 @@ In IntelliJ, set Settings > Build, Execution, Deployment > Build Tools > Gradle 
 IDE and Gradle do not write to the same output directory (the likely cause of a one-off
 `ClassNotFoundException: ReconcileResult`).
 
+In VS Code, red "cannot be resolved" errors on imports such as `software.amazon.awssdk.http.urlconnection`,
+`org.testcontainers.postgresql`, or `com.vitalsshield.simulator` while `./gradlew build` passes mean the Java
+extension's cached Gradle model is stale (it can still describe the old Kotlin DSL build). Run
+"Java: Clean Java Language Server Workspace" from the Command Palette. Setting
+`"java.configuration.updateBuildConfiguration": "automatic"` keeps it in sync after that.
+
 ## PKI (Phase 1)
 
 - `./gradlew :server:bootRun --args='--spring.profiles.active=local'` reconciles the KMS-backed CA hierarchy, issues the

@@ -168,7 +168,7 @@ public final class CertificateProfiles {
     /** The AKI keyIdentifier of {@code cert}, or null if absent. */
     public static byte[] authorityKeyIdentifier(X509Certificate cert) {
         Extension ext = holder(cert).getExtension(Extension.authorityKeyIdentifier);
-        return ext == null ? null : AuthorityKeyIdentifier.getInstance(ext.getParsedValue()).getKeyIdentifier();
+        return ext == null ? null : AuthorityKeyIdentifier.getInstance(ext.getParsedValue()).getKeyIdentifierOctets();
     }
 
     // ---- internals ----------------------------------------------------------------------------------------------
