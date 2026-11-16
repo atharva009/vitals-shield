@@ -1,6 +1,7 @@
 package com.vitalsshield.server.telemetry;
 
 import com.vitalsshield.crypto.TelemetryJws;
+import com.vitalsshield.server.clinical.ClinicalEvaluator;
 import com.vitalsshield.server.gateway.ResolvedCert;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -74,11 +75,14 @@ public class TelemetryIngestService {
     private final NamedParameterJdbcTemplate jdbc;
     private final TelemetryMetrics metrics;
     private final Clock clock;
+    private final ClinicalEvaluator evaluator;
 
-    public TelemetryIngestService(NamedParameterJdbcTemplate jdbc, TelemetryMetrics metrics, Clock clock) {
+    public TelemetryIngestService(NamedParameterJdbcTemplate jdbc, TelemetryMetrics metrics, Clock clock,
+                                  ClinicalEvaluator evaluator) {
         this.jdbc = jdbc;
         this.metrics = metrics;
         this.clock = clock;
+        this.evaluator = evaluator;
     }
 
     /** Result: HTTP status and body. */
@@ -140,7 +144,7 @@ public class TelemetryIngestService {
         // (grace_expires_at = NOW() + 60 s) before or atomically with the insert below.
 
         // 6. Classification (DECISIONS #46).
-        String trustState = TelemetryClassifier.classify(p.metrics());
+        String trustState = TelemetryClassifier.classify(p.metrics(), evaluator.properties());
         String payloadSha256 = HexFormat.of().formatHex(sha256(payloadBytes));
 
         // 7. Spec Section 5 CTE, one autocommit statement.
@@ -167,9 +171,13 @@ public class TelemetryIngestService {
                 .addValue("trustState", new SqlParameterValue(Types.OTHER, trustState));
         List<UUID> inserted = jdbc.queryForList(WINDOW_CTE, params, UUID.class);
 
-        // 8. Accepted.
+        // 8. Accepted. Clinical evaluation runs after this commit, queued per assignment (DECISIONS #69); it does not
+        // delay this response. REJECTED_IMPLAUSIBLE rows are never evaluated, and neither are idempotent retries.
         if (!inserted.isEmpty()) {
             metrics.increment("accepted." + trustState);
+            if (!"REJECTED_IMPLAUSIBLE".equals(trustState)) {
+                evaluator.submit(p.deviceId(), p.assignmentId(), p.batchId());
+            }
             return ok(p.batchId(), trustState, false);
         }
         // 9. No row: work out why.

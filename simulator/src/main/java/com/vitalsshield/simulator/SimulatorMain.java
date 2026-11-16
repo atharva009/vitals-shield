@@ -12,7 +12,9 @@ import java.util.Map;
  * <pre>
  * simulator enroll --device-id X --token T [--state-dir D] [--trust-file F] [--public-url U] [--mtls-url U]
  * simulator ping [--device-id X] [...]
- * simulator run [--device-id X] [--interval-ms 1000] [--count N, 0 = forever] [...]
+ * simulator run [--device-id X] [--interval-ms 1000] [--count N, 0 = forever] [--scenario S]
+ *               [--script "resting:15,drift:6,acute:2"] [...]
+ * simulator scenario [--device-id X] --set S      (S: resting, exertion, drift, acute, low-perfusion-critical)
  * simulator reset-state [--device-id X] [--state-dir D]
  * simulator factory-wipe [--device-id X] [--state-dir D]
  * </pre>
@@ -31,8 +33,9 @@ public final class SimulatorMain {
     /** Entry point usable in-process (tests). Returns the exit code. */
     public static int run(String[] args, PrintStream out, PrintStream err) {
         if (args.length == 0) {
-            err.println("usage: simulator <enroll|ping|run|reset-state|factory-wipe> [--device-id X] [--token T] "
-                    + "[--interval-ms MS] [--count N] [--state-dir D] [--trust-file F] [--public-url U] [--mtls-url U]");
+            err.println("usage: simulator <enroll|ping|run|scenario|reset-state|factory-wipe> [--device-id X] [--token T] "
+                    + "[--interval-ms MS] [--count N] [--scenario S] [--script S:N,...] [--set S] [--state-dir D] "
+                    + "[--trust-file F] [--public-url U] [--mtls-url U]");
             return 2;
         }
         Map<String, String> opts;
@@ -80,8 +83,34 @@ public final class SimulatorMain {
                     return r.status() == 200 ? 0 : 1;
                 }
                 case "run" -> {
+                    Simulator.StreamOptions so;
+                    try {
+                        so = new Simulator.StreamOptions(
+                                opts.containsKey("scenario") ? Scenario.parse(opts.get("scenario")) : null,
+                                opts.containsKey("script") ? ScenarioScript.parse(opts.get("script")) : null);
+                    } catch (IllegalArgumentException e) {
+                        err.println(e.getMessage());
+                        return 2;
+                    }
                     return sim.stream(Long.parseLong(opts.getOrDefault("interval-ms", "1000")),
-                            Long.parseLong(opts.getOrDefault("count", "0")), out);
+                            Long.parseLong(opts.getOrDefault("count", "0")), out, so);
+                }
+                case "scenario" -> {
+                    String set = opts.get("set");
+                    if (set == null) {
+                        out.println("SCENARIO " + sim.store().readScenario().map(Scenario::cliName).orElse("(none)"));
+                        return 0;
+                    }
+                    Scenario sc;
+                    try {
+                        sc = Scenario.parse(set);
+                    } catch (IllegalArgumentException e) {
+                        err.println(e.getMessage());
+                        return 2;
+                    }
+                    sim.store().writeScenario(sc);
+                    out.println("SCENARIO_SET " + sc.cliName() + " " + sim.store().scenarioFile());
+                    return 0;
                 }
                 case "reset-state" -> {
                     sim.store().resetState();

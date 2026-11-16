@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ALL_BOOT_STEPS, api, AuthStatus, Overview, Quarantine, SESSION, TelemetryRow, Unauthorized } from "./api";
+import { AlertsPanel } from "./alerts";
 import { AuditPanel, PasskeySignIn, ProvisionPanel, stepUp } from "./passkeys";
 import s from "./page.module.css";
 import { read, subscribe, UNKNOWN, write } from "./storage";
@@ -58,7 +59,11 @@ function stateClass(state: string): string {
     case "ACTIVE":
     case "ACCEPTED":
     case "HEALTHY":
+    case "LOCKED":
+    case "RESTING":
       return s.chipOk;
+    case "CALIBRATING":
+      return s.chipWarn;
     case "QUARANTINED":
     case "REJECTED_IMPLAUSIBLE":
     case "UNHEALTHY":
@@ -95,6 +100,10 @@ function Flash({ value, children, className }: { value: unknown; children: React
       {children}
     </span>
   );
+}
+
+function z(v: number | undefined): string {
+  return v === undefined ? "" : `${v >= 0 ? "+" : ""}${v.toFixed(1)}`;
 }
 
 function Sparkline({ values }: { values: number[] }) {
@@ -392,6 +401,16 @@ export default function Page() {
           <Flash value={lastRev?.latency_micros} className={s.tileValue}>{lat.big}</Flash>
           <div className={s.tileSub}>{lat.small}</div>
         </div>
+        <div className={`${s.tile} ${o && o.alerts.active > 0 ? s.tileDanger : ""}`} title={o ? `acknowledged ${o.alerts.acknowledged} · resolved ${o.alerts.resolved} · dedupe suppressed ${o.clinical.dedupe_suppressed} · unevaluated batches ${o.clinical.unevaluated}` : ""}>
+          <div className={s.tileLabel}>Active alerts</div>
+          <Flash value={o?.alerts.active} className={s.tileValue}>{o?.alerts.active ?? "…"}</Flash>
+          <div className={s.tileSub}>{o ? `${o.alerts.acknowledged} acknowledged` : ""}</div>
+        </div>
+        <div className={s.tile}>
+          <div className={s.tileLabel}>Retracted alerts</div>
+          <Flash value={o?.alerts.retracted_by_quarantine} className={s.tileValue}>{o?.alerts.retracted_by_quarantine ?? "…"}</Flash>
+          <div className={s.tileSub}>by quarantine</div>
+        </div>
         <div className={s.tile}>
           <div className={s.tileLabel}>Deny-list size</div>
           <Flash value={o?.deny_list_size} className={s.tileValue}>{o?.deny_list_size ?? "…"}</Flash>
@@ -474,7 +493,12 @@ export default function Page() {
                 <td>
                   <Flash value={d.trust_state}>
                     <span className={`${s.chip} ${stateClass(d.trust_state)}`}>{d.trust_state}</span>
-                  </Flash>
+                  </Flash>{" "}
+                  {d.needs_attention && (
+                    <span className={`${s.chip} ${s.chipWarn}`} title="Certificate revoked but quarantine incomplete: retry quarantine">
+                      NEEDS ATTENTION
+                    </span>
+                  )}
                 </td>
                 <td className={s.num}>{d.boot_epoch}</td>
                 <td className={s.num}>
@@ -560,6 +584,60 @@ export default function Page() {
               </div>
             </div>
           )}
+          {device.needs_attention === "CERT_REVOKED_STATE_ACTIVE" && (
+            <div className={s.attention}>Certificate revoked but quarantine incomplete: retry quarantine</div>
+          )}
+          {device.assignment && (
+            <Flash value={[device.assignment.baseline_state, device.assignment.baseline_version]}>
+              <div className={s.baseline}>
+                <div>
+                  <div className={s.muted}>Baseline</div>
+                  <div>
+                    <span className={`${s.chip} ${stateClass(device.assignment.baseline_state)}`}>
+                      {device.assignment.baseline_state}
+                    </span>{" "}
+                    v{device.assignment.baseline_version}
+                  </div>
+                </div>
+                {device.assignment.baseline_state === "CALIBRATING" && (
+                  <div>
+                    <div className={s.muted}>Calibration</div>
+                    <div>
+                      {device.assignment.calibration_count} / {device.assignment.calibration_size} resting batches
+                    </div>
+                  </div>
+                )}
+                {device.assignment.ref && (
+                  <>
+                    <div>
+                      <div className={s.muted}>HR ref</div>
+                      <div>
+                        {device.assignment.ref.hr_mean.toFixed(1)} ± {device.assignment.ref.hr_sd.toFixed(1)} bpm
+                      </div>
+                    </div>
+                    <div>
+                      <div className={s.muted}>HRV ref</div>
+                      <div>
+                        {device.assignment.ref.hrv_mean.toFixed(1)} ± {device.assignment.ref.hrv_sd.toFixed(1)} ms
+                      </div>
+                    </div>
+                    <div>
+                      <div className={s.muted}>SpO2 ref</div>
+                      <div>
+                        {device.assignment.ref.spo2_mean.toFixed(1)} ± {device.assignment.ref.spo2_sd.toFixed(2)} %
+                      </div>
+                    </div>
+                  </>
+                )}
+                <div>
+                  <div className={s.muted}>Streaks</div>
+                  <div>
+                    drift {device.assignment.drift_breach_streak} · low perfusion {device.assignment.degraded_critical_streak}
+                  </div>
+                </div>
+              </div>
+            </Flash>
+          )}
           {result && result.device_id === device.device_id && (
             <div className={s.result}>
               <div className={s.resultBig}>{latency(result.revocation_latency_micros).big}</div>
@@ -580,10 +658,13 @@ export default function Page() {
               <tr>
                 <th className={s.num}>Seq</th>
                 <th>State</th>
+                <th>Activity</th>
                 <th className={s.num}>HR</th>
                 <th className={s.num}>SpO2</th>
                 <th className={s.num}>HRV</th>
                 <th className={s.num}>Perfusion</th>
+                <th className={s.num}>z HR / HRV / SpO2</th>
+                <th>Measured</th>
                 <th>Ingested</th>
               </tr>
             </thead>
@@ -594,10 +675,22 @@ export default function Page() {
                   <td>
                     <span className={`${s.chip} ${stateClass(r.trust_state)}`}>{r.trust_state}</span>
                   </td>
+                  <td>
+                    {r.activity_context ? (
+                      <span className={`${s.chip} ${stateClass(r.activity_context)}`}>{r.activity_context}</span>
+                    ) : (
+                      <span className={s.muted}>–</span>
+                    )}
+                    {!r.clinical_evaluated && (r.trust_state === "ACCEPTED" || r.trust_state === "SIGNAL_DEGRADED") && (
+                      <span className={s.unevaluated} title="clinical_evaluated_at is NULL">unevaluated</span>
+                    )}
+                  </td>
                   <td className={s.num}>{r.heart_rate_bpm}</td>
                   <td className={s.num}>{r.spo2_pct.toFixed(1)}</td>
                   <td className={s.num}>{r.hrv_rmssd_ms.toFixed(1)}</td>
                   <td className={s.num}>{r.perfusion_index.toFixed(2)}</td>
+                  <td className={s.num}>{r.z ? `${z(r.z.hr)} / ${z(r.z.hrv)} / ${z(r.z.spo2)}` : "–"}</td>
+                  <td>{time(r.measured_at)}</td>
                   <td>{ago(r.ingested_at, serverNow)}</td>
                 </tr>
               ))}
@@ -605,6 +698,8 @@ export default function Page() {
           </table>
         </section>
       )}
+
+      <AlertsPanel code={code} selected={selected} onUnauthorized={auditUnauthorized} />
 
       {code === SESSION && <ProvisionPanel onUnauthorized={() => signOut("Session expired.")} />}
 

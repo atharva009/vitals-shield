@@ -55,6 +55,8 @@ import org.springframework.context.annotation.Bean;
 class QuarantineAuditAtomicityIT {
 
     static final String FAILING_DEVICE = "dev_atomic_fail";
+    static final String AUDIT_FAULT_DEVICE = "dev_audit_fault";
+    static final java.util.concurrent.atomic.AtomicBoolean AUDIT_FAULT = new java.util.concurrent.atomic.AtomicBoolean();
 
     @TestConfiguration
     static class FailBeforeCommit {
@@ -63,6 +65,23 @@ class QuarantineAuditAtomicityIT {
             return deviceId -> {
                 if (FAILING_DEVICE.equals(deviceId)) {
                     throw new IllegalStateException("injected failure after the sanitize CTE and the audit append");
+                }
+            };
+        }
+
+        /** Throws inside AuditLog.append, after its INSERT, for one quarantine of AUDIT_FAULT_DEVICE. */
+        @Bean
+        @org.springframework.context.annotation.Primary
+        AuditLog faultyAudit(JdbcTemplate jdbc, Clock clock) {
+            return new AuditLog(jdbc, clock) {
+                @Override
+                public String append(String eventType, String actorId, Map<String, Object> payload) {
+                    String hash = super.append(eventType, actorId, payload);
+                    if ("DEVICE_QUARANTINED".equals(eventType) && AUDIT_FAULT_DEVICE.equals(payload.get("device_id"))
+                            && AUDIT_FAULT.getAndSet(false)) {
+                        throw new IllegalStateException("injected failure inside AuditLog.append");
+                    }
+                    return hash;
                 }
             };
         }
@@ -191,6 +210,79 @@ class QuarantineAuditAtomicityIT {
         assertThat(count("SELECT count(*) FROM security_audit_log WHERE event_type = 'ASSIGNMENT_CLOSED'")).isEqualTo(10);
         assertThat(audit.verify().valid()).isTrue();
         assertThat(deadlocks()).as("SQLSTATE 40P01 (pg_stat_database.deadlocks)").isEqualTo(deadlocksBefore);
+    }
+
+    @Autowired com.vitalsshield.server.clinical.ClinicalEvaluator evaluator;
+
+    @SuppressWarnings("unchecked")
+    Object needsAttention(String deviceId) {
+        List<Map<String, Object>> devices = (List<Map<String, Object>>) alice.get("/api/v1/admin/overview").json()
+                .get("devices");
+        return devices.stream().filter(d -> deviceId.equals(d.get("device_id"))).findFirst().orElseThrow()
+                .get("needs_attention");
+    }
+
+    Map<String, Object> clinicalSnapshot(String deviceId) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("device", jdbc.queryForMap("SELECT trust_state::text AS ts, dek_spki_der_b64 IS NOT NULL AS dek "
+                + "FROM devices WHERE device_id = ?", deviceId));
+        m.put("telemetry", jdbc.queryForList("SELECT batch_id, trust_state::text AS ts FROM telemetry_records "
+                + "WHERE device_id = ? ORDER BY sequence_number", deviceId));
+        m.put("baseline", jdbc.queryForMap("""
+                SELECT baseline_state::text AS bs, baseline_version AS v, cardinality(calibration_batch_ids) AS n,
+                       ref_hr_mean, drift_breach_streak, degraded_critical_streak
+                  FROM patient_device_assignments WHERE device_id = ? AND status = 'ACTIVE'
+                """, deviceId));
+        m.put("alerts", jdbc.queryForList("SELECT alert_id, alert_status::text AS s, retracted_at FROM clinical_alerts "
+                + "WHERE device_id = ? ORDER BY alert_id", deviceId));
+        return m;
+    }
+
+    /** Phase 7 (0c): a failure inside AuditLog.append rolls back the whole quarantine, including the clinical parts. */
+    @Test
+    @Order(3)
+    void failureInsideAuditAppendRollsBackQuarantine() throws Exception {
+        SimulatorCli.Run e = sim().enroll(AUDIT_FAULT_DEVICE, WebAuthnSteps.provision(alice, ALICE, AUDIT_FAULT_DEVICE));
+        assertThat(e.exit()).as(e.out()).isZero();
+        // 5 EXERTION + 10 RESTING (LOCKED v1) + 1 resting + 2 acute (one RESTING_HR_HIGH alert, one deduplicated).
+        SimulatorCli.Run s = sim().run("run", "--device-id", AUDIT_FAULT_DEVICE, "--count", "18", "--interval-ms", "0",
+                "--script", "resting:16,acute:2");
+        assertThat(s.exit()).as(s.out()).isZero();
+        assertThat(evaluator.awaitIdle(java.time.Duration.ofSeconds(20))).isTrue();
+        Map<String, Object> before = clinicalSnapshot(AUDIT_FAULT_DEVICE);
+        assertThat(before.get("baseline").toString()).contains("bs=LOCKED").contains("v=1");
+        assertThat((List<?>) before.get("alerts")).hasSize(1);
+        assertThat(needsAttention(AUDIT_FAULT_DEVICE)).isNull();
+        long quarantinedEntries = count("SELECT count(*) FROM security_audit_log WHERE event_type = 'DEVICE_QUARANTINED'");
+
+        AUDIT_FAULT.set(true);
+        AdminHttp.Response r = WebAuthnSteps.quarantine(alice, ALICE, AUDIT_FAULT_DEVICE, 60, "audit fault");
+        assertThat(r.status()).as(r.body()).isEqualTo(500);
+        assertThat(AUDIT_FAULT.get()).as("the fault fired").isFalse();
+
+        // Device not QUARANTINED, telemetry unchanged, no baseline reset, no alert retracted, no audit row.
+        assertThat(clinicalSnapshot(AUDIT_FAULT_DEVICE)).isEqualTo(before);
+        assertThat(count("SELECT count(*) FROM security_audit_log WHERE event_type = 'DEVICE_QUARANTINED'"))
+                .isEqualTo(quarantinedEntries);
+        assertThat(audit.verify().valid()).isTrue();
+        // Fail closed: the certificate was revoked before the transaction.
+        assertThat(jdbc.queryForObject("SELECT status::text FROM certificates WHERE device_id = ?", String.class,
+                AUDIT_FAULT_DEVICE)).isEqualTo("REVOKED");
+        assertThat(needsAttention(AUDIT_FAULT_DEVICE)).isEqualTo("CERT_REVOKED_STATE_ACTIVE");
+
+        // Retry without the fault.
+        AdminHttp.Response retry = WebAuthnSteps.quarantine(alice, ALICE, AUDIT_FAULT_DEVICE, 60, "audit fault retry");
+        assertThat(retry.status()).as(retry.body()).isEqualTo(200);
+        System.out.println("AUDIT_FAULT_RETRY " + retry.body());
+        Map<String, Object> after = clinicalSnapshot(AUDIT_FAULT_DEVICE);
+        assertThat(after.get("device").toString()).contains("ts=QUARANTINED");
+        assertThat(after.get("baseline").toString()).contains("bs=CALIBRATING").contains("v=2");
+        assertThat((List<Map<String, Object>>) after.get("alerts"))
+                .allSatisfy(a -> assertThat(a.get("s")).isEqualTo("RETRACTED_BY_QUARANTINE"));
+        assertThat(count("SELECT count(*) FROM security_audit_log WHERE event_type = 'DEVICE_QUARANTINED'"))
+                .isEqualTo(quarantinedEntries + 1);
+        assertThat(needsAttention(AUDIT_FAULT_DEVICE)).isNull();
+        assertThat(audit.verify().valid()).isTrue();
     }
 
     AdminHttp client() {

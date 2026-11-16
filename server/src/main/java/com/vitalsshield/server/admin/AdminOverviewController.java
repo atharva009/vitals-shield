@@ -30,4 +30,12 @@ public class AdminOverviewController {
         int capped = Math.max(1, Math.min(limit, 200));
         return Mono.fromCallable(() -> service.telemetry(deviceId, capped)).subscribeOn(Schedulers.boundedElastic());
     }
+
+    /** Clinical alerts, newest first; optional {@code device_id} filter. */
+    @GetMapping("/api/v1/admin/alerts")
+    public Mono<List<Map<String, Object>>> alerts(@RequestParam(name = "device_id", required = false) String deviceId,
+                                                  @RequestParam(defaultValue = "100") int limit) {
+        int capped = Math.max(1, Math.min(limit, 500));
+        return Mono.fromCallable(() -> service.alerts(deviceId, capped)).subscribeOn(Schedulers.boundedElastic());
+    }
 }

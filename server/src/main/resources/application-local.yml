@@ -7,3 +7,6 @@ vitalsshield:
   pki:
     # Local profile only: a missing/disabled KMS key rebuilds the whole CA hierarchy.
     allow-hierarchy-rebuild: true
+  clinical:
+    # Demo calibration window (DECISIONS #6, #72): 10 resting batches instead of the default 30.
+    calibration-size: 10

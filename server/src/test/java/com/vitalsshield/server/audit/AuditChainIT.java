@@ -87,8 +87,12 @@ class AuditChainIT {
     void tamperingOnePayloadBreaksTheChainAtThatEntry() {
         long target = jdbc.queryForObject(
                 "SELECT sequence_id FROM security_audit_log ORDER BY sequence_id OFFSET 20 LIMIT 1", Long.class);
+        // Since V5 (DECISIONS #75) a trigger rejects the UPDATE; the table owner can disable it, which is the
+        // tampering the hash chain exists to detect.
+        jdbc.execute("ALTER TABLE security_audit_log DISABLE TRIGGER security_audit_log_no_update_delete");
         jdbc.update("UPDATE security_audit_log SET payload_json = jsonb_set(payload_json, '{note}', '\"edited\"') "
                 + "WHERE sequence_id = ?", target);
+        jdbc.execute("ALTER TABLE security_audit_log ENABLE TRIGGER security_audit_log_no_update_delete");
         AuditLog.Verification v = audit.verify();
         assertThat(v.valid()).isFalse();
         assertThat(v.firstBrokenSequenceId()).isEqualTo(target);

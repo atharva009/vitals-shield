@@ -1,5 +1,9 @@
 package com.vitalsshield.server.enrollment;
 
+// LOCK ORDER (DECISIONS #70), in every transaction: devices -> telemetry_records -> patient_device_assignments
+// -> clinical_alerts -> audit advisory lock LAST. This class: devices FOR UPDATE (activation) and plain reads of the
+// ACTIVE assignment; it never locks telemetry_records, assignments or alerts, and never appends to the audit log.
+
 import com.vitalsshield.server.admin.AdminProperties;
 import com.vitalsshield.server.admin.webauthn.ProvisioningAssertionVerifier;
 import com.vitalsshield.crypto.CsrFactory;

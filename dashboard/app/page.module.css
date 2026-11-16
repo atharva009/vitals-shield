@@ -99,3 +99,11 @@
 .tokenRow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .tokenRow code { word-break: break-all; font-size: 14px; }
 .approved { color: var(--muted); font-size: 13px; }
+
+.rowRetracted td { opacity: 0.5; }
+.rowRetracted td:nth-child(-n + 7) { text-decoration: line-through; }
+.alertActions { display: flex; gap: 6px; justify-content: flex-end; }
+.attention { margin: 10px 0; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--warn); color: var(--warn); font-weight: 600; }
+.baseline { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 12px 0; padding: 12px 14px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--border); }
+.baseline div > div:last-child { font-variant-numeric: tabular-nums; }
+.unevaluated { font-size: 11px; font-weight: 700; color: var(--warn); margin-left: 4px; }

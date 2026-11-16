@@ -73,9 +73,11 @@ public final class Simulator {
         Map<String, Object> json = parse(r.body());
         String certPem = (String) json.get("new_cert_pem");
         long bootEpoch = ((Number) json.get("assigned_boot_epoch")).longValue();
+        // measured_at stays monotonic across re-enrollment when the old state is still there (DECISIONS #74).
+        String lastMeasuredAt = existing.map(x -> x.state().lastMeasuredAt()).orElse(null);
         SimulatorState state = new SimulatorState(config.deviceId(), bootEpoch, 0,
                 (String) json.get("current_assignment_id"), (String) json.get("assignment_active_from"),
-                clock.instant().toString());
+                clock.instant().toString(), lastMeasuredAt);
         store.saveEnrollment(olk.getPrivate(), certPem, state);
         return new EnrollOutcome.Enrolled(SimulatorStateStore.parseCert(certPem), bootEpoch);
     }
@@ -102,10 +104,25 @@ public final class Simulator {
     }
 
     /**
-     * Streaming mode: one signed batch every {@code intervalMs} ({@code count} batches, 0 = forever). The sequence
-     * number is persisted before each send (write-ahead). Returns the process exit code (0 done, 3 refused/forbidden).
+     * Scenario control for {@link #stream}: {@code start} (null: the scenario file, else resting) and an optional
+     * script. The scenario file is read before every batch; a value written by someone else (the {@code scenario}
+     * command) takes over and ends the script.
      */
+    public record StreamOptions(Scenario start, ScenarioScript script) {
+        public static final StreamOptions DEFAULT = new StreamOptions(null, null);
+    }
+
     public int stream(long intervalMs, long count, java.io.PrintStream out) throws InterruptedException {
+        return stream(intervalMs, count, out, StreamOptions.DEFAULT);
+    }
+
+    /**
+     * Streaming mode: one signed batch every {@code intervalMs} ({@code count} batches, 0 = forever). The sequence
+     * number and the compressed-clock measured_at are persisted before each send (write-ahead, DECISIONS #74).
+     * Returns the process exit code (0 done, 3 refused/forbidden).
+     */
+    public int stream(long intervalMs, long count, java.io.PrintStream out, StreamOptions options)
+            throws InterruptedException {
         SimulatorStateStore.Enrollment e = store.load()
                 .orElseThrow(() -> new IllegalStateException("not enrolled: run enroll first"));
         if (!e.olkCert().getNotAfter().toInstant().isAfter(clock.instant())) {
@@ -119,17 +136,42 @@ public final class Simulator {
         }
         GatewayClient client = GatewayClient.mtlsClient(config.trustFile(), e.olkKey(), e.olkCert());
         URI ingest = config.mtlsUrl().resolve("/api/v1/telemetry/ingest");
-        java.util.Random rnd = new java.util.Random();
         long lastOkSeq = 0;
         long lastOkAt = System.nanoTime();
 
+        ScenarioScript script = options.script();
+        Scenario current = options.start() != null ? options.start()
+                : script != null ? script.at(0) : store.readScenario().orElse(Scenario.RESTING);
+        store.writeScenario(current);
+        Scenario lastWritten = current;
+        out.println("SCENARIO " + current.cliName());
+
         for (long sent = 0; count == 0 || sent < count; sent++) {
-            long seq = store.incrementSequence();             // persisted before use
+            Scenario fromFile = store.readScenario().orElse(lastWritten);
+            Scenario next = current;
+            if (fromFile != lastWritten) {                    // `simulator scenario --set` while running
+                script = null;
+                next = fromFile;
+                lastWritten = fromFile;
+            } else if (script != null) {
+                next = script.at(sent);
+                if (next != lastWritten) {
+                    store.writeScenario(next);
+                    lastWritten = next;
+                }
+            }
+            if (next != current) {
+                current = next;
+                out.println("SCENARIO " + current.cliName());
+            }
+
+            SimulatorStateStore.NextBatch nb = store.nextBatch(clock.instant()); // persisted before use
+            long seq = nb.sequenceNumber();
             SimulatorState state = store.load().orElseThrow().state();
             java.util.UUID batchId = java.util.UUID.randomUUID();
             Instant now = clock.instant();
             byte[] payload = TelemetryFrames.payload(config.deviceId(), state.assignmentId(), state.bootEpoch(), seq,
-                    batchId, now, now, TelemetryFrames.Metrics.resting(rnd));
+                    batchId, nb.measuredAt(), now, current.generate(config.deviceId() + "/" + state.bootEpoch(), seq));
             String jws = com.vitalsshield.crypto.TelemetryJws.sign(payload, e.olkKey(), certDer);
 
             while (true) {                                    // same frame until it is answered (DECISIONS #44)
@@ -149,7 +191,8 @@ public final class Simulator {
                 long rtt = (System.nanoTime() - t0) / 1_000_000;
                 boolean idempotent = r.body() != null && r.body().contains("\"idempotent_retry\":true");
                 out.println("SENT seq=" + seq + " batch=" + batchId.toString().substring(0, 8) + " status=" + r.status()
-                        + " rtt_ms=" + rtt + (idempotent ? " idempotent" : ""));
+                        + " rtt_ms=" + rtt + " measured_at=" + nb.measuredAt() + " scenario=" + current.cliName()
+                        + trustState(r.body()) + (idempotent ? " idempotent" : ""));
                 if (r.status() == 503) {
                     Thread.sleep(1000L * r.headers().firstValue("Retry-After").map(Long::parseLong).orElse(1L));
                     continue;
@@ -174,6 +217,19 @@ public final class Simulator {
             }
         }
         return 0;
+    }
+
+    private static String trustState(String body) {
+        if (body == null) {
+            return "";
+        }
+        int i = body.indexOf("\"trust_state\":\"");
+        if (i < 0) {
+            return "";
+        }
+        int from = i + "\"trust_state\":\"".length();
+        int to = body.indexOf('"', from);
+        return to < 0 ? "" : " trust_state=" + body.substring(from, to);
     }
 
     private static Map<String, Object> parse(String json) {

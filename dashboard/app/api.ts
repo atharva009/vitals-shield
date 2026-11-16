@@ -19,9 +19,48 @@ export type Device = {
   last_ingested_at: string | null;
   dev_seed: boolean;
   dek_anchor_verified: boolean | null;
-  assignment: { assignment_id: string; patient_id: string; baseline_state: string; baseline_version: number } | null;
+  assignment: Assignment | null;
   active_cert: { serial_display: string; not_before: string; not_after: string; status: string; thumbprint_s256: string } | null;
   live_sockets: number;
+  /** DECISIONS #77: certificate revoked but the quarantine transaction did not commit. */
+  needs_attention: "CERT_REVOKED_STATE_ACTIVE" | null;
+};
+
+export type Baseline = {
+  hr_mean: number;
+  hr_sd: number;
+  hrv_mean: number;
+  hrv_sd: number;
+  spo2_mean: number;
+  spo2_sd: number;
+};
+
+export type Assignment = {
+  assignment_id: string;
+  patient_id: string;
+  baseline_state: "CALIBRATING" | "LOCKED";
+  baseline_version: number;
+  calibration_count: number;
+  calibration_size: number;
+  ref: Baseline | null;
+  degraded_critical_streak: number;
+  drift_breach_streak: number;
+  resting_since: string | null;
+};
+
+export type Alert = {
+  alert_id: string;
+  device_id: string;
+  assignment_id: string | null;
+  alert_type: string;
+  condition_code: string | null;
+  alert_status: "ACTIVE" | "ACKNOWLEDGED" | "RETRACTED_BY_QUARANTINE" | "RESOLVED";
+  explanation: string;
+  triggering_batch_count: number;
+  triggering_batch_ids_short: string[];
+  baseline_version: number | null;
+  created_at: string;
+  retracted_at: string | null;
 };
 
 export type Revocation = {
@@ -74,6 +113,15 @@ export type Overview = {
   revocations: Revocation[];
   quarantines: Quarantine[];
   devices: Device[];
+  alerts: { active: number; acknowledged: number; retracted_by_quarantine: number; resolved: number };
+  clinical: {
+    evaluations: number;
+    evaluation_failures: number;
+    dedupe_suppressed: number;
+    alerts_created: Record<string, number>;
+    calibration_size: number;
+    unevaluated: number;
+  };
 };
 
 export type TelemetryRow = {
@@ -86,6 +134,12 @@ export type TelemetryRow = {
   spo2_pct: number;
   hrv_rmssd_ms: number;
   perfusion_index: number;
+  step_cadence_spm: number;
+  motion_g_rms: number;
+  boot_epoch: number;
+  activity_context: "RESTING" | "EXERTION" | null;
+  clinical_evaluated: boolean;
+  z: { hr: number; hrv: number; spo2: number } | null;
 };
 
 export const ALL_BOOT_STEPS = [

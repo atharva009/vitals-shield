@@ -1,5 +1,10 @@
 package com.vitalsshield.server.quarantine;
 
+// LOCK ORDER (DECISIONS #70), in every transaction: devices -> telemetry_records -> patient_device_assignments
+// -> clinical_alerts -> audit advisory lock LAST. This class: devices FOR UPDATE first, then (one statement) the
+// sanitize CTE updates telemetry_records, patient_device_assignments and clinical_alerts in that order, then the
+// audit append.
+
 import com.vitalsshield.server.audit.AuditLog;
 import org.springframework.beans.factory.ObjectProvider;
 import com.vitalsshield.server.pki.CrlService;
@@ -40,7 +45,8 @@ public class QuarantineService {
 
     /**
      * Spec Section 6 sanitize statement, unchanged except that the final UPDATE is wrapped as the {@code
-     * retracted_alerts} CTE with {@code RETURNING ca.alert_id}, and a SELECT returns the three counts.
+     * retracted_alerts} CTE with {@code RETURNING ca.alert_id}, a SELECT returns the three counts, and (Phase 7,
+     * DECISIONS #68) the tainted_baselines SET list also zeroes the four V5 streak columns.
      */
     static final String SANITIZE_WITH_COUNTS = """
             WITH quarantined_batches AS (
@@ -64,7 +70,11 @@ public class QuarantineService {
                     ref_hrv_mean          = NULL,
                     ref_hrv_sd            = NULL,
                     ref_spo2_mean         = NULL,
-                    ref_spo2_sd           = NULL
+                    ref_spo2_sd           = NULL,
+                    degraded_critical_streak    = 0,
+                    degraded_critical_batch_ids = '{}',
+                    drift_breach_streak         = 0,
+                    drift_breach_batch_ids      = '{}'
                 WHERE a.device_id = :deviceId
                   AND a.calibration_batch_ids && ARRAY(SELECT batch_id FROM quarantined_batches)
                 RETURNING a.assignment_id, (a.baseline_version - 1) AS old_baseline_version

@@ -1,5 +1,9 @@
 package com.vitalsshield.server.admin.webauthn;
 
+// LOCK ORDER (DECISIONS #70), in every transaction: devices -> telemetry_records -> patient_device_assignments
+// -> clinical_alerts -> audit advisory lock LAST. This class: begin inserts devices (if absent) then the assignment, then the
+// audit append; closeAssignment updates the assignment, then the audit append.
+
 import com.vitalsshield.crypto.encoding.CanonicalEncodings;
 import com.vitalsshield.server.audit.AuditLog;
 import com.yubico.webauthn.AssertionRequest;

@@ -20,10 +20,9 @@ public final class TelemetryFrames {
     public record Metrics(int heartRateBpm, double hrvRmssdMs, double spo2Pct, double signalPerfusionIndex,
                           int stepCadenceSpm, double motionGRms) {
 
-        /** Plausible resting values with small noise (HR 60-80, HRV 35-55, SpO2 96-99, perfusion 2-5). */
+        /** The resting scenario's generator ({@link Scenario#RESTING}). */
         public static Metrics resting(Random rnd) {
-            return new Metrics(60 + rnd.nextInt(21), round(35 + 20 * rnd.nextDouble()), round(96 + 3 * rnd.nextDouble()),
-                    round(2 + 3 * rnd.nextDouble()), 0, round(0.01 + 0.02 * rnd.nextDouble()));
+            return Scenario.RESTING.generate(rnd);
         }
 
         static double round(double v) {

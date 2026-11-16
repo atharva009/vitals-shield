@@ -104,11 +104,50 @@ public final class SimulatorStateStore {
         return next;
     }
 
+    /** The next sequence number and its compressed-clock measured_at. */
+    public record NextBatch(long sequenceNumber, java.time.Instant measuredAt) {
+    }
+
+    /**
+     * Allocates sequence_number + 1 and measured_at = {@link CompressedClock#next}(last_measured_at, now), and persists
+     * both before the caller uses them (DECISIONS #74): a crash can neither reuse a number nor move measured_at back.
+     */
+    public NextBatch nextBatch(java.time.Instant now) {
+        SimulatorState s = SimulatorState.fromJson(read(stateFile()));
+        long next = s.sequenceNumber() + 1;
+        java.time.Instant last = s.lastMeasuredAt() == null ? null : java.time.Instant.parse(s.lastMeasuredAt());
+        java.time.Instant measuredAt = CompressedClock.next(last, now);
+        writeAtomic(stateFile(), s.withNextBatch(next, measuredAt.toString()).toJson(), false);
+        return new NextBatch(next, measuredAt);
+    }
+
+    /** simulator-state/&lt;id&gt;/scenario: the live scenario, read by a running simulator before every batch. */
+    public Path scenarioFile() {
+        return deviceDir.resolve("scenario");
+    }
+
+    public void writeScenario(Scenario scenario) {
+        writeAtomic(scenarioFile(), scenario.cliName() + "\n", false);
+    }
+
+    /** Empty if the file is missing or unreadable mid-rename. */
+    public Optional<Scenario> readScenario() {
+        try {
+            if (!Files.exists(scenarioFile())) {
+                return Optional.empty();
+            }
+            String v = Files.readString(scenarioFile(), StandardCharsets.US_ASCII).trim();
+            return v.isEmpty() ? Optional.empty() : Optional.of(Scenario.parse(v));
+        } catch (IOException | IllegalArgumentException e) {
+            return Optional.empty();
+        }
+    }
+
     /** Stores a new assignment after the server answers 409 ASSIGNMENT_CHANGED. */
     public void updateAssignment(String assignmentId, String activeFrom) {
         SimulatorState s = SimulatorState.fromJson(read(stateFile()));
         writeAtomic(stateFile(), new SimulatorState(s.deviceId(), s.bootEpoch(), s.sequenceNumber(), assignmentId,
-                activeFrom, s.enrolledAt()).toJson(), false);
+                activeFrom, s.enrolledAt(), s.lastMeasuredAt()).toJson(), false);
     }
 
     /** Erases the state partition only; keys/dek.key survives. */

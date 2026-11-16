@@ -113,4 +113,29 @@ class SimulatorStateStoreTest {
         return new SimulatorState("dev_a", 1, seq, "00000000-0000-0000-0000-000000000001",
                 "2026-11-13T12:00:00Z", "2026-11-13T12:00:01Z");
     }
+
+    @Test
+    void nextBatchPersistsSequenceAndMeasuredAtTogether() {
+        SimulatorStateStore store = new SimulatorStateStore(root, "dev_x");
+        store.saveEnrollment(com.vitalsshield.crypto.EcKeys.generateP256().getPrivate(), TestCert.PEM,
+                new SimulatorState("dev_x", 1, 0, "a", "f", "e"));
+        java.time.Instant now = java.time.Instant.parse("2026-11-16T12:00:00Z");
+        SimulatorStateStore.NextBatch first = store.nextBatch(now);
+        assertThat(first.sequenceNumber()).isEqualTo(1);
+        assertThat(first.measuredAt()).isEqualTo(now.minus(java.time.Duration.ofHours(12)));
+        SimulatorStateStore.NextBatch second = store.nextBatch(now.plusSeconds(1));
+        assertThat(second.sequenceNumber()).isEqualTo(2);
+        assertThat(second.measuredAt()).isEqualTo(first.measuredAt().plusSeconds(60));
+        // A fresh store instance (a restart) continues from the persisted value, not from now - 12 h.
+        SimulatorStateStore reopened = new SimulatorStateStore(root, "dev_x");
+        assertThat(reopened.nextBatch(now.plusSeconds(2)).measuredAt()).isEqualTo(first.measuredAt().plusSeconds(120));
+    }
+
+    @Test
+    void scenarioFileRoundTrip() {
+        SimulatorStateStore store = new SimulatorStateStore(root, "dev_y");
+        assertThat(store.readScenario()).isEmpty();
+        store.writeScenario(Scenario.LOW_PERFUSION_CRITICAL);
+        assertThat(store.readScenario()).contains(Scenario.LOW_PERFUSION_CRITICAL);
+    }
 }
