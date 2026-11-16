@@ -718,7 +718,7 @@ locks in one global order, no cycle is possible.
 
 `QuarantineAuditAtomicityIT.noDeadlockUnderMixedLoad` runs 10 quarantines, 10 provisionings, and 10 assignment
 closes at once. Every request returned 200, the chain verified, and `pg_stat_database.deadlocks` did not change. The
-whole batch took `MIXED_LOAD_MS=99` in the final run.
+whole batch took `MIXED_LOAD_MS=90` in the final run (99 and 179 in earlier runs).
 
 `quarantineAndAuditAreAtomic` injects a failure after the sanitize CTE and the audit append, before commit
 (`QuarantineHooks`). The device stays ACTIVE with its DEK, its 3 telemetry batches stay ACCEPTED, and there is no
