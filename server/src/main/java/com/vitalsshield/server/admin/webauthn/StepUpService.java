@@ -86,23 +86,12 @@ public class StepUpService {
         if (p.purpose() != purpose || !p.deviceId().equals(deviceId)) {
             throw new WebAuthnFailure(400, "CEREMONY_MISMATCH", "ceremony is for another action or device");
         }
-        WebAuthnService.VerifiedAssertion a = webauthn.finishAssertion(p.request(), webauthn.parseAssertion(credentialJson));
+        WebAuthnService.VerifiedAssertion a = webauthn.finishAssertion(p.request(), webauthn.parseAssertion(credentialJson),
+                WebAuthnService.Use.STEP_UP);
         if (!a.clinicianId().equals(session.clinicianId())) {
             throw new WebAuthnFailure(403, "CLINICIAN_MISMATCH", "assertion from another clinician's passkey");
         }
         return new Approved(purpose, p.params(), p.deviceId(), a);
-    }
-
-    /** Records the executed quarantine in the audit chain (its own short transaction, after the quarantine commit). */
-    public void auditQuarantine(Approved approved, Map<String, Object> result) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("device_id", approved.deviceId());
-        payload.put("lookback_minutes", approved.params().lookbackMinutes());
-        payload.put("reason", approved.params().reason());
-        payload.put("batches_quarantined", result.get("batches_quarantined"));
-        payload.put("certs_revoked", result.get("certs_revoked"));
-        payload.put("assertion_sha256", approved.assertion().sha256Hex());
-        tx.executeWithoutResult(s -> audit.append("DEVICE_QUARANTINED", approved.assertion().clinicianId(), payload));
     }
 
     /** REAUTH_REQUIRED to ACTIVE with epoch_resync_allowed, and the audit entry, in one transaction. */

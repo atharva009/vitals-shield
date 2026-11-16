@@ -159,7 +159,7 @@ class ProvisioningReverifyIT {
     void devSeedTokensPassTheSameVerification() throws IOException {
         Path keyFile = dir.resolve("devseed/passkey.key");
         var first = com.vitalsshield.devtools.DevSeeder.seedWebAuthn(jdbc, tx, java.time.Clock.systemUTC(), anchorKey,
-                keyFile, ports.admin(), com.vitalsshield.devtools.DevSeeder.Request.defaults("dev_seeded"));
+                keyFile, ports.admin(), java.util.Set.of("local"), com.vitalsshield.devtools.DevSeeder.Request.defaults("dev_seeded"));
         assertThat(java.nio.file.attribute.PosixFilePermissions.toString(Files.getPosixFilePermissions(keyFile)))
                 .isEqualTo("rw-------");
         SimulatorCli.Run r = sim().enroll("dev_seeded", first.token());
@@ -167,8 +167,8 @@ class ProvisioningReverifyIT {
 
         // A second run reuses the stored passkey: still one dev-seed passkey, and it does not count as a clinician's.
         com.vitalsshield.devtools.DevSeeder.seedWebAuthn(jdbc, tx, java.time.Clock.systemUTC(), anchorKey, keyFile,
-                ports.admin(), com.vitalsshield.devtools.DevSeeder.Request.defaults("dev_seeded_2"));
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM clinician_passkeys WHERE clinician_id = 'dev-seed-clinician'",
+                ports.admin(), java.util.Set.of("local"), com.vitalsshield.devtools.DevSeeder.Request.defaults("dev_seeded_2"));
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM clinician_passkeys WHERE purpose = 'DEV_SEED'",
                 Integer.class)).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT issued_by_clinician FROM device_bootstrap_tokens WHERE device_id = 'dev_seeded_2'",
                 String.class)).isEqualTo("dev-seed-clinician");

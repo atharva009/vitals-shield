@@ -46,7 +46,7 @@ public class ProvisioningService {
     }
 
     private record Pending(String deviceId, String token, Instant expiresAt, UUID assignmentId, String clinicianId,
-                           AssertionRequest request) {
+                           AssertionRequest request, WebAuthnService.Use use) {
     }
 
     private final JdbcTemplate jdbc;
@@ -68,7 +68,17 @@ public class ProvisioningService {
         this.ceremonies = new CeremonyStore<>(clock);
     }
 
+    /** From a clinician's session (the HTTP route). */
     public Begun begin(String clinicianId, String credentialId, BeginRequest req) {
+        return begin(clinicianId, credentialId, req, WebAuthnService.Use.PROVISION);
+    }
+
+    /** The dev seed tool's path: the only one a DEV_SEED credential may finish, in the local profile (#66). */
+    public Begun beginForSeedTool(String clinicianId, String credentialId, BeginRequest req) {
+        return begin(clinicianId, credentialId, req, WebAuthnService.Use.SEED_PROVISION);
+    }
+
+    private Begun begin(String clinicianId, String credentialId, BeginRequest req, WebAuthnService.Use use) {
         Instant now = clock.instant();
         UUID assignmentId = tx.execute(s -> {
             ProvisioningRecords.Assignment a = records.ensureDeviceAndAssignment(req.deviceId(), req.hardwareModel(),
@@ -84,7 +94,7 @@ public class ProvisioningService {
         byte[] digest = CanonicalEncodings.provisioningDigest(req.deviceId(), token, expiresAt.toEpochMilli());
         AssertionRequest request = webauthn.boundAssertion(digest, credentialId, clinicianId);
         String ceremonyId = ceremonies.put(new Pending(req.deviceId(), token, expiresAt, assignmentId, clinicianId,
-                request));
+                request, use));
         return new Begun(ceremonyId, WebAuthnService.requestJson(request));
     }
 
@@ -93,7 +103,8 @@ public class ProvisioningService {
         if (!p.clinicianId().equals(clinicianId)) {
             throw new WebAuthnFailure(403, "CLINICIAN_MISMATCH", "ceremony belongs to another clinician");
         }
-        WebAuthnService.VerifiedAssertion a = webauthn.finishAssertion(p.request(), webauthn.parseAssertion(credentialJson));
+        WebAuthnService.VerifiedAssertion a = webauthn.finishAssertion(p.request(), webauthn.parseAssertion(credentialJson),
+                p.use());
         if (!a.clinicianId().equals(clinicianId)) {
             throw new WebAuthnFailure(403, "CLINICIAN_MISMATCH", "assertion from another clinician's passkey");
         }
@@ -111,7 +122,7 @@ public class ProvisioningService {
         Instant now = clock.instant();
         Boolean done = tx.execute(s -> {
             int n = jdbc.update("""
-                    UPDATE patient_device_assignments SET status = 'CLOSED', active_until = ?
+                    UPDATE patient_device_assignments SET status = 'CLOSED', active_until = GREATEST(?, active_from)
                      WHERE assignment_id = ? AND status = 'ACTIVE'
                     """, java.sql.Timestamp.from(now), assignmentId);
             if (n == 1) {

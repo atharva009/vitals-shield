@@ -21,10 +21,15 @@ import org.springframework.stereotype.Component;
 @Component
 public class PasskeyRepository implements CredentialRepository {
 
-    /** The dev seed tool's clinician (DECISIONS #51, #57). Not counted for the first-passkey rule (DECISIONS #64). */
-    public static final String DEV_SEED_CLINICIAN = "dev-seed-clinician";
+    /** {@code clinician_passkeys.purpose} (V4, DECISIONS #66). */
+    public enum Purpose { CLINICIAN, DEV_SEED }
 
-    public record Row(String credentialId, String clinicianId, byte[] cose, String anchorSig, long signCount) {
+    public record Row(String credentialId, String clinicianId, byte[] cose, String anchorSig, long signCount,
+                      Purpose purpose) {
+        public boolean devSeed() {
+            return purpose == Purpose.DEV_SEED;
+        }
+
         public byte[] credentialIdBytes() {
             return WebAuthnBytes.fromB64url(credentialId);
         }
@@ -36,36 +41,40 @@ public class PasskeyRepository implements CredentialRepository {
         this.jdbc = jdbc;
     }
 
-    /** Passkeys of real clinicians (the dev seed passkey is excluded). Zero means the setup code may register. */
+    /** CLINICIAN passkeys (DEV_SEED excluded, DECISIONS #64, #66). Zero means the setup code may register. */
     public long countClinicianPasskeys() {
         Long n = jdbc.queryForObject(
-                "SELECT count(*) FROM clinician_passkeys WHERE clinician_id <> ?", Long.class, DEV_SEED_CLINICIAN);
+                "SELECT count(*) FROM clinician_passkeys WHERE purpose = 'CLINICIAN'", Long.class);
         return n == null ? 0 : n;
     }
 
     public Optional<Row> find(String credentialIdB64url) {
         List<Row> rows = jdbc.query("""
-                SELECT credential_id_b64, clinician_id, public_key_cose_der_b64, passkey_registry_kms_sig, sign_count
+                SELECT credential_id_b64, clinician_id, public_key_cose_der_b64, passkey_registry_kms_sig, sign_count,
+                       purpose
                   FROM clinician_passkeys WHERE credential_id_b64 = ?
                 """, (rs, i) -> new Row(rs.getString(1), rs.getString(2), decodeCose(rs.getString(3)),
-                rs.getString(4), rs.getLong(5)), credentialIdB64url);
+                rs.getString(4), rs.getLong(5), Purpose.valueOf(rs.getString(6))), credentialIdB64url);
         return rows.stream().findFirst();
     }
 
     public List<Row> forClinician(String clinicianId) {
         return jdbc.query("""
-                SELECT credential_id_b64, clinician_id, public_key_cose_der_b64, passkey_registry_kms_sig, sign_count
+                SELECT credential_id_b64, clinician_id, public_key_cose_der_b64, passkey_registry_kms_sig, sign_count,
+                       purpose
                   FROM clinician_passkeys WHERE clinician_id = ?
                 """, (rs, i) -> new Row(rs.getString(1), rs.getString(2), decodeCose(rs.getString(3)),
-                rs.getString(4), rs.getLong(5)), clinicianId);
+                rs.getString(4), rs.getLong(5), Purpose.valueOf(rs.getString(6))), clinicianId);
     }
 
-    public void insert(String credentialIdB64url, String clinicianId, byte[] cose, String anchorSig, long signCount) {
+    public void insert(String credentialIdB64url, String clinicianId, byte[] cose, String anchorSig, long signCount,
+                       Purpose purpose) {
         jdbc.update("""
                 INSERT INTO clinician_passkeys (credential_id_b64, clinician_id, public_key_cose_der_b64,
-                                                passkey_registry_kms_sig, sign_count)
-                VALUES (?, ?, ?, ?, ?)
-                """, credentialIdB64url, clinicianId, Base64.getEncoder().encodeToString(cose), anchorSig, signCount);
+                                                passkey_registry_kms_sig, sign_count, purpose)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """, credentialIdB64url, clinicianId, Base64.getEncoder().encodeToString(cose), anchorSig, signCount,
+                purpose.name());
     }
 
     public void updateSignCount(String credentialIdB64url, long signCount) {

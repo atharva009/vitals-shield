@@ -39,8 +39,11 @@ public class ProvisioningAssertionVerifier {
     private final RegistryAnchorKey anchorKey;
     private final WebAuthnOrigins origins;
 
+    private final DevSeedPolicy devSeed;
+
     public ProvisioningAssertionVerifier(PasskeyRepository passkeys, RegistryAnchorKey anchorKey,
-                                         WebAuthnOrigins origins) {
+                                         WebAuthnOrigins origins, DevSeedPolicy devSeed) {
+        this.devSeed = devSeed;
         this.passkeys = passkeys;
         this.anchorKey = anchorKey;
         this.origins = origins;
@@ -53,6 +56,9 @@ public class ProvisioningAssertionVerifier {
             PasskeyRepository.Row row = passkeys.find(a.credentialId()).orElse(null);
             if (row == null) {
                 return Optional.of("unknown passkey " + a.credentialId());
+            }
+            if (row.devSeed() && !devSeed.allowed()) {
+                return Optional.of("DEV_SEED approval outside the local profile (DECISIONS #66)");
             }
             if (!PasskeyAnchor.verify(anchorKey, row.credentialId(), row.clinicianId(), row.cose(), row.anchorSig())) {
                 return Optional.of("passkey anchor does not verify");

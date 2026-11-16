@@ -35,8 +35,6 @@ import org.springframework.stereotype.Service;
 public class AdminOverviewService {
 
     static final Duration DEK_CACHE_TTL = Duration.ofSeconds(30);
-    /** Issuer of dev-seed tokens (DECISIONS #32, #51); the seed tool lives on the test classpath. */
-    static final String DEV_SEED_CLINICIAN = "dev-seed-clinician";
 
     private record CachedVerdict(Instant at, boolean verified) {
     }
@@ -223,8 +221,10 @@ public class AdminOverviewService {
         jdbc.query("""
                 SELECT d.device_id, d.trust_state::text AS ts, d.boot_epoch, d.last_sequence_num, d.last_ingested_at,
                        d.dek_spki_der_b64 IS NOT NULL AS has_dek,
-                       (SELECT t.issued_by_clinician FROM device_bootstrap_tokens t WHERE t.device_id = d.device_id
-                         ORDER BY t.expires_at DESC LIMIT 1) AS latest_token_issuer,
+                       (SELECT p.purpose FROM device_bootstrap_tokens t
+                          JOIN clinician_passkeys p ON p.credential_id_b64 = t.webauthn_cred_id_b64
+                         WHERE t.device_id = d.device_id
+                         ORDER BY t.expires_at DESC LIMIT 1) AS latest_token_purpose,
                        a.assignment_id::text AS assignment_id, a.patient_id, a.baseline_state::text AS baseline_state,
                        a.baseline_version,
                        c.serial_number, c.not_before, c.not_after, c.status::text AS cert_status, c.cert_thumbprint_s256
@@ -243,7 +243,8 @@ public class AdminOverviewService {
             m.put("last_sequence_num", rs.getLong("last_sequence_num"));
             Timestamp last = rs.getTimestamp("last_ingested_at");
             m.put("last_ingested_at", last == null ? null : last.toInstant().toString());
-            m.put("dev_seed", DEV_SEED_CLINICIAN.equals(rs.getString("latest_token_issuer")));
+            // DECISIONS #51, #66: the latest token was approved by a DEV_SEED credential.
+            m.put("dev_seed", "DEV_SEED".equals(rs.getString("latest_token_purpose")));
             m.put("dek_anchor_verified", rs.getBoolean("has_dek") ? dekVerified(id) : null);
             if (rs.getString("assignment_id") != null) {
                 Map<String, Object> a = new LinkedHashMap<>();

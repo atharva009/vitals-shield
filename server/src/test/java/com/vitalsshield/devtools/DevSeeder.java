@@ -60,26 +60,32 @@ public final class DevSeeder {
      */
     public static Result seedWebAuthn(JdbcTemplate jdbc, TransactionTemplate tx, Clock clock,
                                       com.vitalsshield.server.admin.webauthn.RegistryAnchorKey anchorKey,
-                                      java.nio.file.Path keyFile, int adminPort, Request req) {
+                                      java.nio.file.Path keyFile, int adminPort, java.util.Set<String> activeProfiles,
+                                      Request req) {
+        // DECISIONS #66: the seed tool's passkey exists only for local development. Refuse before touching anything.
+        if (!activeProfiles.contains("local")) {
+            throw new IllegalStateException("refusing to seed: the dev seed passkey requires the local profile, active: "
+                    + activeProfiles);
+        }
         var origins = com.vitalsshield.server.admin.webauthn.WebAuthnOrigins.forAdminPort(adminPort, false);
         String origin = "http://localhost:" + adminPort;
         var audit = new com.vitalsshield.server.audit.AuditLog(jdbc, clock);
         var passkeys = new com.vitalsshield.server.admin.webauthn.PasskeyRepository(jdbc);
         var webauthn = new com.vitalsshield.server.admin.webauthn.WebAuthnService(passkeys, anchorKey, origins, tx,
-                audit, clock);
+                audit, new com.vitalsshield.server.admin.webauthn.DevSeedPolicy(true), clock);
         var good = com.vitalsshield.server.testsupport.SoftwareAuthenticator.Variant.good(origin);
 
         var authenticator = java.nio.file.Files.exists(keyFile)
                 ? com.vitalsshield.server.testsupport.SoftwareAuthenticator.load(keyFile)
                 : com.vitalsshield.server.testsupport.SoftwareAuthenticator.create();
         if (passkeys.find(authenticator.credentialIdB64url()).isEmpty()) {
-            String options = webauthn.registerBegin(CLINICIAN_ID, CREDENTIAL_ID);
+            String options = webauthn.registerBeginDevSeed(CLINICIAN_ID, CREDENTIAL_ID);
             webauthn.registerFinish(authenticator.register(options, good));
             authenticator.save(keyFile);
         }
 
         var provisioning = new com.vitalsshield.server.admin.webauthn.ProvisioningService(jdbc, tx, webauthn, audit, clock);
-        var begun = provisioning.begin(CLINICIAN_ID, authenticator.credentialIdB64url(),
+        var begun = provisioning.beginForSeedTool(CLINICIAN_ID, authenticator.credentialIdB64url(),
                 new com.vitalsshield.server.admin.webauthn.ProvisioningService.BeginRequest(req.deviceId(),
                         HARDWARE_MODEL, req.patientId(), req.birthYear(), 30));
         var done = provisioning.finish(CLINICIAN_ID, begun.ceremonyId(),
@@ -95,8 +101,8 @@ public final class DevSeeder {
             Instant now = clock.instant();
             jdbc.update("""
                     INSERT INTO clinician_passkeys (credential_id_b64, clinician_id, public_key_cose_der_b64,
-                                                    passkey_registry_kms_sig)
-                    VALUES (?, ?, ?, ?)
+                                                    passkey_registry_kms_sig, purpose)
+                    VALUES (?, ?, ?, ?, 'DEV_SEED')
                     ON CONFLICT (credential_id_b64) DO NOTHING
                     """, CREDENTIAL_ID, CLINICIAN_ID, FAKE_WEBAUTHN, FAKE_SIGNATURE);
             jdbc.update("""

@@ -23,14 +23,14 @@ Terminals: **A** server, **B** simulator, **C** commands. Run everything from th
 
 ## 1. Reset the passkey table (only if `passkeys_registered` is not 0)
 
-The setup code registers a passkey only while no clinician passkey exists (DECISIONS #60). The dev seed passkey
-(`dev-seed-clinician`) does not count (DECISIONS #64) and is kept.
+The setup code registers a passkey only while no clinician passkey exists (DECISIONS #60). DEV_SEED passkeys
+(`purpose = 'DEV_SEED'`) do not count (DECISIONS #64, #66) and are kept.
 
 **C**:
 ```
 docker compose exec -T postgres psql -U vitalsshield -d vitalsshield \
-  -c "DELETE FROM device_bootstrap_tokens WHERE webauthn_cred_id_b64 IN (SELECT credential_id_b64 FROM clinician_passkeys WHERE clinician_id <> 'dev-seed-clinician');" \
-  -c "DELETE FROM clinician_passkeys WHERE clinician_id <> 'dev-seed-clinician';"
+  -c "DELETE FROM device_bootstrap_tokens WHERE webauthn_cred_id_b64 IN (SELECT credential_id_b64 FROM clinician_passkeys WHERE purpose = 'CLINICIAN');" \
+  -c "DELETE FROM clinician_passkeys WHERE purpose = 'CLINICIAN';"
 ```
 Expect: two `DELETE n` lines; the status call from step 0.4 now shows `"passkeys_registered":0`. The audit log is not
 touched, so its chain stays valid. The old passkey stays in iCloud Keychain; delete it later in System Settings >

@@ -205,7 +205,8 @@ class WebAuthnFlowsIT {
     @Order(21)
     void expiredChallengeIsRejected() {
         TestClock clock = new TestClock(Instant.now());
-        WebAuthnService service = new WebAuthnService(passkeys, anchorKey, origins, tx, audit, clock);
+        WebAuthnService service = new WebAuthnService(passkeys, anchorKey, origins, tx, audit, new DevSeedPolicy(true),
+                clock);
         String options = service.signInBegin();
         clock.advance(Duration.ofMinutes(2).plusSeconds(1));
         String credential = ALICE.assert_(options, good());

@@ -250,13 +250,13 @@ public class WebAuthnController {
                                 str(b, "ceremony_id"), credential(b)))
                         .subscribeOn(Schedulers.boundedElastic()))
                 .flatMap(approved -> quarantine.quarantine(approved.deviceId(), approved.params().lookbackMinutes(),
-                                approved.params().reason())
-                        .flatMap(res -> Mono.fromCallable(() -> {
+                                approved.params().reason(), new QuarantineService.Approval(
+                                        approved.assertion().clinicianId(), approved.assertion().sha256Hex()))
+                        .map(res -> {
                             Map<String, Object> out = new LinkedHashMap<>(res.toJson());
                             out.put("approved_by", approved.assertion().clinicianId());
-                            stepUp.auditQuarantine(approved, out);
                             return ok(out);
-                        }).subscribeOn(Schedulers.boundedElastic())))
+                        }))
                 .onErrorResume(WebAuthnFailure.class, e -> Mono.just(error(e.status(), e.code())))
                 .onErrorResume(QuarantineService.StateConflict.class, e -> {
                     ResponseEntity<Map<String, Object>> c = QuarantineController.conflict(e);

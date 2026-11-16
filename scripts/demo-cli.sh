@@ -7,14 +7,14 @@
 #   DEMO_QUARANTINE=ui    (default) wait for the operator to press Quarantine on the dashboard (Touch ID step-up)
 #   DEMO_QUARANTINE=curl  single-step curl quarantine with the setup code; bearer mode only
 #                         (vitalsshield.admin.auth=bearer, DECISIONS #60)
-#   DEMO_DEVICE=dev_wearable_019
+#   DEVICE_ID=dev_wearable_019  the device to seed, enroll, stream, and quarantine (DEMO_DEVICE is an older alias)
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 PAUSE="${DEMO_PAUSE:-2}"
 MODE="${DEMO_QUARANTINE:-ui}"
-DEVICE="${DEMO_DEVICE:-dev_wearable_019}"
+DEVICE="${DEVICE_ID:-${DEMO_DEVICE:-dev_wearable_019}}"
 SIM=simulator/build/install/simulator/bin/simulator
 ADMIN=http://127.0.0.1:8445
 PUBLIC=https://127.0.0.1:8444

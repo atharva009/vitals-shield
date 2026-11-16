@@ -72,12 +72,21 @@ public final class SeedDemoDevice {
                         new KmsKeyAdmin(kms));
                 r = DevSeeder.seedWebAuthn(jdbc, tx, Clock.systemUTC(), anchor,
                         Path.of(opts.getOrDefault("passkey-file", "var/devseed/passkey.key")),
-                        Integer.parseInt(opts.getOrDefault("admin-port", "8445")), request);
+                        Integer.parseInt(opts.getOrDefault("admin-port", "8445")), activeProfiles(opts), request);
             }
         } else {
             throw new IllegalArgumentException("--auth must be webauthn or bearer, got " + auth);
         }
         System.out.println("BOOTSTRAP_TOKEN=" + r.token());
+    }
+
+    /**
+     * Profiles the seed tool runs under: {@code --profiles a,b}, else SPRING_PROFILES_ACTIVE, else "local" (this
+     * Gradle task is the local development tool; it also refuses any database but the local Compose one).
+     */
+    static java.util.Set<String> activeProfiles(Map<String, String> opts) {
+        String raw = opts.getOrDefault("profiles", System.getenv().getOrDefault("SPRING_PROFILES_ACTIVE", "local"));
+        return java.util.Set.of(raw.split("\\s*,\\s*"));
     }
 
     /** Throws unless the JDBC URL points at the local Compose database. */

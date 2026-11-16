@@ -14,4 +14,10 @@ public class WebAuthnConfig {
     public WebAuthnOrigins webAuthnOrigins(ListenerProperties listeners, Environment env) {
         return WebAuthnOrigins.forAdminPort(listeners.adminPort(), env.acceptsProfiles(Profiles.of("dashboard-dev")));
     }
+
+    /** DECISIONS #66: DEV_SEED passkeys work only in the local profile. */
+    @Bean
+    public DevSeedPolicy devSeedPolicy(Environment env) {
+        return new DevSeedPolicy(env.acceptsProfiles(Profiles.of("local")));
+    }
 }

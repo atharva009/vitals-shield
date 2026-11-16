@@ -60,8 +60,12 @@ public class WebAuthnService {
         }
     }
 
-    private record PendingRegistration(PublicKeyCredentialCreationOptions options, String clinicianId) {
+    private record PendingRegistration(PublicKeyCredentialCreationOptions options, String clinicianId,
+                                       PasskeyRepository.Purpose purpose) {
     }
+
+    /** What an assertion is for (DECISIONS #66): a DEV_SEED credential may only answer SEED_PROVISION, in local. */
+    public enum Use { SIGN_IN, STEP_UP, PROVISION, SEED_PROVISION }
 
     private final RelyingParty rp;
     private final PasskeyRepository passkeys;
@@ -73,8 +77,11 @@ public class WebAuthnService {
     private final TransactionTemplate tx;
     private final AuditLog audit;
 
+    private final DevSeedPolicy devSeed;
+
     public WebAuthnService(PasskeyRepository passkeys, RegistryAnchorKey anchorKey, WebAuthnOrigins origins,
-                           TransactionTemplate tx, AuditLog audit, Clock clock) {
+                           TransactionTemplate tx, AuditLog audit, DevSeedPolicy devSeed, Clock clock) {
+        this.devSeed = devSeed;
         this.tx = tx;
         this.audit = audit;
         this.passkeys = passkeys;
@@ -99,8 +106,20 @@ public class WebAuthnService {
 
     // ---- registration -----------------------------------------------------------------------------------------
 
-    /** Creation options JSON ({@code {"publicKey":{...}}}) for navigator.credentials.create. */
+    /** Creation options JSON ({@code {"publicKey":{...}}}) for navigator.credentials.create. A CLINICIAN passkey. */
     public String registerBegin(String clinicianId, String displayName) {
+        return registerBegin(clinicianId, displayName, PasskeyRepository.Purpose.CLINICIAN);
+    }
+
+    /** The dev seed tool's registration (no HTTP route reaches this). Refused outside the local profile. */
+    public String registerBeginDevSeed(String clinicianId, String displayName) {
+        if (!devSeed.allowed()) {
+            throw new WebAuthnFailure(403, "DEV_SEED_NOT_ALLOWED", "dev seed passkeys need the local profile");
+        }
+        return registerBegin(clinicianId, displayName, PasskeyRepository.Purpose.DEV_SEED);
+    }
+
+    private String registerBegin(String clinicianId, String displayName, PasskeyRepository.Purpose purpose) {
         PublicKeyCredentialCreationOptions options = rp.startRegistration(StartRegistrationOptions.builder()
                 .user(UserIdentity.builder()
                         .name(clinicianId)
@@ -113,7 +132,7 @@ public class WebAuthnService {
                         .build())
                 .timeout(TIMEOUT_MS)
                 .build());
-        registrations.put(options.getChallenge().getBase64Url(), new PendingRegistration(options, clinicianId));
+        registrations.put(options.getChallenge().getBase64Url(), new PendingRegistration(options, clinicianId, purpose));
         return json(() -> options.toCredentialsCreateJson());
     }
 
@@ -140,7 +159,8 @@ public class WebAuthnService {
         String credentialId = result.getKeyId().getId().getBase64Url();
         String anchor = PasskeyAnchor.sign(anchorKey, credentialId, pending.clinicianId(), cose);
         tx.executeWithoutResult(s -> {
-            passkeys.insert(credentialId, pending.clinicianId(), cose, anchor, result.getSignatureCount());
+            passkeys.insert(credentialId, pending.clinicianId(), cose, anchor, result.getSignatureCount(),
+                    pending.purpose());
             audit.append("PASSKEY_REGISTERED", pending.clinicianId(), java.util.Map.of("credential_id", credentialId,
                     "cose_key_sha256", WebAuthnBytes.sha256Hex(cose),
                     "attestation_object_sha256",
@@ -167,7 +187,7 @@ public class WebAuthnService {
         PublicKeyCredential<AuthenticatorAssertionResponse, ClientAssertionExtensionOutputs> pkc = parseAssertion(credentialJson);
         AssertionRequest request = signIns.take(pkc.getResponse().getClientData().getChallenge().getBase64Url())
                 .orElseThrow(WebAuthnFailure::gone);
-        return finishAssertion(request, pkc);
+        return finishAssertion(request, pkc, Use.SIGN_IN);
     }
 
     /**
@@ -205,10 +225,17 @@ public class WebAuthnService {
      * (challenge, origin, rpIdHash, UP, UV, signature, allowCredentials), then the counter rule.
      */
     public VerifiedAssertion finishAssertion(AssertionRequest request,
-                                             PublicKeyCredential<AuthenticatorAssertionResponse, ClientAssertionExtensionOutputs> pkc) {
+                                             PublicKeyCredential<AuthenticatorAssertionResponse, ClientAssertionExtensionOutputs> pkc,
+                                             Use use) {
         String credentialId = pkc.getId().getBase64Url();
         PasskeyRepository.Row row = passkeys.find(credentialId)
                 .orElseThrow(() -> new WebAuthnFailure(401, "UNKNOWN_CREDENTIAL", credentialId));
+        // DECISIONS #66: checked before anything else, so a refused DEV_SEED assertion changes nothing (not even
+        // sign_count).
+        if (row.devSeed() && !(use == Use.SEED_PROVISION && devSeed.allowed())) {
+            log.warn("DEV_SEED credential {} refused for {} (local profile: {})", credentialId, use, devSeed.allowed());
+            throw new WebAuthnFailure(403, "DEV_SEED_NOT_ALLOWED", use.name());
+        }
         if (!PasskeyAnchor.verify(anchorKey, row.credentialId(), row.clinicianId(), row.cose(), row.anchorSig())) {
             log.error("Passkey anchor INVALID for credential {} (clinician {}): row changed without KMS Key #4",
                     credentialId, row.clinicianId());

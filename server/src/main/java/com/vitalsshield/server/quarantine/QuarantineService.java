@@ -1,5 +1,7 @@
 package com.vitalsshield.server.quarantine;
 
+import com.vitalsshield.server.audit.AuditLog;
+import org.springframework.beans.factory.ObjectProvider;
 import com.vitalsshield.server.pki.CrlService;
 import com.vitalsshield.server.signer.SignerRevocationService;
 import java.time.Clock;
@@ -128,9 +130,18 @@ public class QuarantineService {
     private final CrlService crls;
     private final Clock clock;
     private final Deque<Result> recent = new ConcurrentLinkedDeque<>();
+    private final AuditLog audit;
+    private final QuarantineHooks hooks;
+
+    /** Who approved the quarantine (webauthn mode), for the audit entry written inside the transaction. */
+    public record Approval(String clinicianId, String assertionSha256) {
+    }
 
     public QuarantineService(NamedParameterJdbcTemplate jdbc, TransactionTemplate tx,
-                             SignerRevocationService revocations, CrlService crls, Clock clock) {
+                             SignerRevocationService revocations, CrlService crls, Clock clock, AuditLog audit,
+                             ObjectProvider<QuarantineHooks> hooks) {
+        this.audit = audit;
+        this.hooks = hooks.getIfAvailable(() -> QuarantineHooks.NONE);
         this.jdbc = jdbc;
         this.tx = tx;
         this.revocations = revocations;
@@ -138,7 +149,16 @@ public class QuarantineService {
         this.clock = clock;
     }
 
+    /** Bearer mode (Phase 4/5): no approval, no audit entry. */
     public Mono<Result> quarantine(String deviceId, int lookbackMinutes, String reason) {
+        return quarantine(deviceId, lookbackMinutes, reason, null);
+    }
+
+    /**
+     * With {@code approval}, the DEVICE_QUARANTINED audit entry is appended inside the same transaction as the lock,
+     * state flip, and sanitize (DECISIONS #67): both commit or neither does.
+     */
+    public Mono<Result> quarantine(String deviceId, int lookbackMinutes, String reason, Approval approval) {
         long t0 = System.nanoTime();
         return Mono.fromCallable(() -> requireQuarantinable(deviceId))
                 .subscribeOn(Schedulers.boundedElastic())
@@ -147,7 +167,8 @@ public class QuarantineService {
                     // DECISIONS #11: t0 (request receipt) to every close future complete, measured once inside the
                     // bulk revocation so the revocation log and this response report the same number.
                     long latencyMicros = bulk.latencyMicros();
-                    return Mono.fromCallable(() -> sanitize(deviceId, lookbackMinutes, reason, bulk, latencyMicros))
+                    return Mono.fromCallable(() -> sanitize(deviceId, lookbackMinutes, reason, bulk, latencyMicros,
+                                    approval))
                             .subscribeOn(Schedulers.boundedElastic());
                 })
                 .doOnNext(r -> {
@@ -183,7 +204,7 @@ public class QuarantineService {
     }
 
     private Result sanitize(String deviceId, int lookbackMinutes, String reason,
-                            SignerRevocationService.BulkRevocation bulk, long latencyMicros) {
+                            SignerRevocationService.BulkRevocation bulk, long latencyMicros, Approval approval) {
         Result result = tx.execute(status -> {
             Map<String, Object> d = Map.of("d", deviceId);
             // a) Lock first (DECISIONS #42), and re-check the state under the lock.
@@ -211,10 +232,23 @@ public class QuarantineService {
                             java.sql.Types.TIMESTAMP_WITH_TIMEZONE,
                             java.time.OffsetDateTime.ofInstant(quarantineTs, java.time.ZoneOffset.UTC)))
                     .addValue("lookbackMinutes", lookbackMinutes));
-            return new Result(deviceId, quarantineTs, bulk.keys().size(), bulk.channelsClosed(), latencyMicros,
+            Result r = new Result(deviceId, quarantineTs, bulk.keys().size(), bulk.channelsClosed(), latencyMicros,
                     ((Number) counts.get("batches_quarantined")).longValue(),
                     ((Number) counts.get("baselines_reset")).longValue(),
                     ((Number) counts.get("alerts_retracted")).longValue());
+            // e) Audit last (DECISIONS #67): its advisory lock is taken after every row lock above.
+            if (approval != null) {
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("device_id", deviceId);
+                payload.put("lookback_minutes", lookbackMinutes);
+                payload.put("reason", reason);
+                payload.put("batches_quarantined", r.batchesQuarantined());
+                payload.put("certs_revoked", r.certsRevoked());
+                payload.put("assertion_sha256", approval.assertionSha256());
+                audit.append("DEVICE_QUARANTINED", approval.clinicianId(), payload);
+            }
+            hooks.beforeCommit(deviceId);
+            return r;
         });
         bulk.keys().stream().map(k -> k.issuerKeyHash()).distinct().forEach(crls::revocationCommitted);
         return result;

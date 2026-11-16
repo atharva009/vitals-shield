@@ -48,7 +48,16 @@ public class AuditLog {
         this.clock = clock;
     }
 
-    /** Inside a transaction. Returns the new entry hash. */
+    /**
+     * Inside the caller's transaction, as its LAST statement. Returns the new entry hash.
+     *
+     * <p>Lock ordering rule (DECISIONS #67): every transaction that appends here takes this advisory lock last, after
+     * all the row locks it needs (devices FOR UPDATE, token and assignment updates, the sanitize CTE, FK key-share
+     * locks from inserts). A transaction holding the advisory lock therefore never waits for a row lock, so no cycle
+     * "A holds a row and waits for the audit lock, B holds the audit lock and waits for that row" can form. Callers:
+     * WebAuthnService.registerFinish, ProvisioningService.begin/finish/closeAssignment, StepUpService.restore,
+     * QuarantineService.sanitize. Each appends after its last row-locking statement.
+     */
     public String append(String eventType, String actorId, Map<String, Object> payload) {
         jdbc.queryForList("SELECT pg_advisory_xact_lock(?)", LOCK_KEY);
         List<String> last = jdbc.queryForList(

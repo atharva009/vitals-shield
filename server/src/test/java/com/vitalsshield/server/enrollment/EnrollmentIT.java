@@ -315,7 +315,7 @@ class EnrollmentIT {
     @Test
     void noAssignment409() throws Exception {
         DevSeeder.Result seed = seed("dev_unassigned");
-        jdbc.update("UPDATE patient_device_assignments SET status = 'CLOSED', active_until = NOW() "
+        jdbc.update("UPDATE patient_device_assignments SET status = 'CLOSED', active_until = GREATEST(NOW(), active_from) "
                 + "WHERE device_id = 'dev_unassigned'");
 
         GatewayClient.Response r = post(freshBody("dev_unassigned", seed.token()));
