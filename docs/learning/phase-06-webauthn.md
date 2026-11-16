@@ -41,6 +41,9 @@ Deviations beyond the brief: DECISIONS #64 (the dev seed passkey does not count 
 integration tests run in bearer mode) and #65 (ceremony keys, 410 for every dead ceremony, audit timing for
 quarantine, no CRL republish on a refused enrollment, byte-exact `webauthn_*` columns).
 
+Changed in Phase 6.1: the dev seed passkey is restricted by a `purpose` column (DECISIONS #66), and the quarantine
+audit entry now commits inside the quarantine transaction (DECISIONS #67). See the section at the end.
+
 ![First run](img/phase-06-first-run.png)
 
 ## 2. Concept primers
@@ -361,6 +364,9 @@ sequenceDiagram
     S-->>B: Phase 4 JSON + approved_by
 ```
 
+Changed in Phase 6.1: the DEVICE_QUARANTINED entry is no longer a separate transaction after Q returns; Q appends it
+itself, inside its sanitize transaction, after every row lock (DECISIONS #67).
+
 ![Step-up dialog](img/phase-06-stepup.png)
 
 ![After the step-up quarantine](img/phase-06-quarantined.png)
@@ -403,6 +409,9 @@ attacker cannot get a clinician's passkey to sign a digest of their own token.
 
 Rows from Phases 3 to 5 (`dev-seed`, fake fields) remain; they belong to `dev-seed-clinician`, are excluded from the
 first-passkey count, and cannot sign in (their anchor does not verify).
+
+Changed in Phase 6.1: V4 adds `purpose` (`CLINICIAN` default, or `DEV_SEED`). The dev seed rows are DEV_SEED; the
+first-passkey count and the DEV SEED badge read this column instead of the clinician id.
 
 ### `device_bootstrap_tokens` WebAuthn columns
 
@@ -462,6 +471,8 @@ Not defended, stated plainly:
   layer 3 says.
 - **The dev seed key file** (`var/devseed/passkey.key`, mode 600) is a working passkey for `dev-seed-clinician`. It is
   dev only and visible as the DEV SEED badge.
+  Changed in Phase 6.1: it can no longer sign in or approve anything; it only finishes the seed tool's own
+  provisioning, and only in the local profile (DECISIONS #66).
 
 ## 6. Design decisions
 
@@ -590,6 +601,15 @@ SPINE_REVOCATION_LATENCY_MICROS=[6697, 3294, 2640, 2944, 2525]
 
 ## 10. Judge Q&A
 
+**Q: Your dev seed tool has a passkey on disk. Isn't that a back door?**
+A: It would be if it had clinician powers, which is why it does not. The row is marked `purpose = 'DEV_SEED'`, and
+the server checks that column before it looks at anything else in an assertion. A DEV_SEED credential is refused for
+sign-in and for every step-up (403, nothing changes, not even its signature counter), so it can never get a session,
+quarantine, restore, or close an assignment. The only thing it can do is finish a provisioning ceremony that the seed
+tool's own code started, and only when the server runs with the `local` profile; outside it, the seed tool refuses to
+run and Protocol A refuses any token a DEV_SEED credential approved. Its tokens also carry the DEV SEED badge on the
+dashboard. `DevSeedPasskeyIT` checks each refusal and that the database is unchanged afterwards.
+
 **Q: What stops someone with database access from enrolling a rogue device?**
 A: Three signatures they cannot make. To enroll, the device needs a token row whose stored WebAuthn approval
 verifies: Protocol A recomputes the ProvisioningDigest from the presented token and expiry and checks that the stored
@@ -628,3 +648,101 @@ A: An unlocked laptop with a live session can view the dashboard until the sessi
 total), though it cannot act without Touch ID. We do not verify attestation, so we do not know the authenticator
 model. Sessions are in memory. The admin plane is plain HTTP on loopback. And a compromised server process, or
 stolen KMS Key #4 credentials, defeats the anchors, as spec Section 2 layer 3 states.
+
+## Changed in Phase 6.1
+
+Commit: `309377e` (fix(admin): restrict dev seed passkey; audit entries atomic with audited actions).
+
+### Why a passkey whose private key is a file must not have clinician powers
+
+Everything that makes a passkey trustworthy comes from where its private key lives. A Touch ID passkey's key is made
+inside the Secure Enclave and never leaves it; using it needs the person's finger, every time. The dev seed key is the
+opposite: a PKCS#8 file at `var/devseed/passkey.key`. Mode 600 limits it to the server's user account, but anything
+running as that user, a backup, or a copied repo directory has it, and using it needs no person at all, since the
+"authenticator" is our own test code that sets the UP and UV flags to whatever it likes. So its signatures prove only
+"some process could read that file", not "a clinician approved this". In Phase 6 it was a full clinician passkey
+(only excluded from the first-passkey count), so anyone with the file could have signed in and quarantined devices.
+
+Phase 6.1 (DECISIONS #66) makes its powers match what it proves. Migration V4 adds `clinician_passkeys.purpose`;
+the seed tool registers its key as `DEV_SEED` through a separate method that no HTTP route calls. Every assertion
+says what it is for (`WebAuthnService.Use`: SIGN_IN, STEP_UP, PROVISION, SEED_PROVISION), and the very first check
+after loading the row is: a DEV_SEED credential is accepted only for SEED_PROVISION, and only if `DevSeedPolicy`
+says the `local` profile is active. Because this runs before the anchor, the library, or the counter update, a
+refusal leaves the database exactly as it was. Protocol A applies the same rule when it re-verifies a stored
+approval, so outside `local` a seeded token cannot enroll even if one exists.
+
+Real output, against Compose and `bootRun` on 2026-11-16 (the token is shortened here):
+
+```
+$ ./gradlew :server:seedDemoDevice --args="--device-id dev_precheck_001"
+13:07:15.756 [main] INFO com.vitalsshield.server.admin.webauthn.WebAuthnService -- Passkey registered for dev-seed-clinician (credential l2yZgwZq..., anchor signed with KMS Key #4)
+BOOTSTRAP_TOKEN=<43 characters>
+$ simulator factory-wipe --device-id dev_precheck_001
+FACTORY_WIPED simulator-state/dev_precheck_001
+$ simulator enroll --device-id dev_precheck_001 --token <token>
+ENROLLED serial=977b97683a7182480a90872751e70c92fab66ba boot_epoch=1 not_after=2026-11-17T06:06:17Z
+$ psql -c "select purpose, clinician_id, left(credential_id_b64, 12) from clinician_passkeys"
+ purpose  |    clinician_id    |     left
+----------+--------------------+--------------
+ DEV_SEED | dev-seed-clinician | dev-seed
+ DEV_SEED | dev-seed-clinician | l2yZgwZqAfZ2
+```
+
+The first row is the Phase 3 fake row, marked by V4's one-time backfill; the second is the software passkey the
+seed tool just registered. The enrollment proves a software-passkey approval passes Protocol A re-verification.
+
+### The lock ordering rule, and why it prevents deadlocks
+
+A lock makes a transaction wait until another transaction lets go. A deadlock is two transactions that each hold
+one lock and wait for the other's:
+
+```
+T1: locks devices row D            T2: takes the audit advisory lock
+T1: waits for the audit lock  ...  T2: waits for devices row D
+    (held by T2)                       (held by T1)
+```
+
+Neither can continue, and neither will ever release what it holds, because releasing happens at commit. Postgres
+notices the cycle after `deadlock_timeout` (1 s by default) and aborts one of them with SQLSTATE 40P01. Moving the
+quarantine audit entry into the quarantine transaction (DECISIONS #67) makes that transaction hold both kinds of lock
+at once: row locks on the device, tokens, telemetry, assignments, and alerts, and the audit chain's advisory lock.
+That is exactly the setting where a cycle can form.
+
+The rule that prevents it: every transaction that appends to `security_audit_log` takes the advisory lock last,
+after all the row locks it will ever need. `AuditLog.append` is always the final statement (quarantine, restore,
+provisioning begin and finish, passkey registration, assignment close). Then a transaction that holds the audit lock
+never waits for a row lock: it has none left to take. A wait can only go one way, from "waiting for the audit lock"
+toward "holds the audit lock and is finishing", and a chain of waits that only ever points toward a finishing
+transaction cannot loop back. This is the general principle behind lock ordering: if every transaction acquires
+locks in one global order, no cycle is possible.
+
+`QuarantineAuditAtomicityIT.noDeadlockUnderMixedLoad` runs 10 quarantines, 10 provisionings, and 10 assignment
+closes at once. Every request returned 200, the chain verified, and `pg_stat_database.deadlocks` did not change. The
+whole batch took `MIXED_LOAD_MS=99` in the final run.
+
+`quarantineAndAuditAreAtomic` injects a failure after the sanitize CTE and the audit append, before commit
+(`QuarantineHooks`). The device stays ACTIVE with its DEK, its 3 telemetry batches stay ACCEPTED, and there is no
+DEVICE_QUARANTINED entry. The certificate stays REVOKED: revocation happens before the transaction and is not undone,
+which is the intended fail-closed behavior. The device is cut off even though its data was not sanitized, and the
+operator retries.
+
+### Tests added
+
+| Test | Property proved |
+| :--- | :--- |
+| `DevSeedPasskeyIT.devSeedProvisioningStillWorks` | the seed tool's path still provisions and enrolls; its row is DEV_SEED; it does not count as a clinician passkey; the dashboard shows the DEV SEED badge |
+| `DevSeedPasskeyIT.devSeedCannotSignIn` | 403 `DEV_SEED_NOT_ALLOWED`, no cookie, database unchanged |
+| `DevSeedPasskeyIT.devSeedCannotApproveQuarantine` | 403 on a real quarantine ceremony, database unchanged |
+| `DevSeedPasskeyIT.devSeedCannotApproveRestore` | 403 on a real restore ceremony, database unchanged |
+| `DevSeedPasskeyIT.devSeedRefusedOutsideLocalProfile` | the seed tool refuses without `local`; with the policy off, even the seed tool's provisioning finish is 403 and DEV_SEED registration is refused; Protocol A refuses a DEV_SEED-approved token; database unchanged |
+| `QuarantineAuditAtomicityIT.quarantineAndAuditAreAtomic` | quarantine effects and audit entry roll back together; revocation stands |
+| `QuarantineAuditAtomicityIT.noDeadlockUnderMixedLoad` | 30 concurrent audited actions, all 200, no deadlock, chain valid |
+
+### Gotcha
+
+- **A Phase 3 test started failing on a clock difference.** `EnrollmentIT.noAssignment409` closed an assignment
+  with `active_until = NOW()` (the Postgres container's clock) when `active_from` had come from the JVM's clock. The
+  Docker VM's clock was a few milliseconds behind the host, so the range was inverted and Postgres refused it
+  (`range lower bound must be less than or equal to range upper bound`). The test now uses
+  `GREATEST(NOW(), active_from)`, and so does `ProvisioningService.closeAssignment`.
+

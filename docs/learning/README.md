@@ -15,7 +15,7 @@ from the spec.
 | 3 | [Protocol A enrollment, dev seed tool, simulator enroll and persistence](phase-03-enrollment.md) | `adb62df` |
 | 4 | [The thin spine: JWS ingest, replay window, quarantine, serial ledger](phase-04-spine.md) | `0c302cd` |
 | 5 | [Operator dashboard: overview API, KMS health monitor, Next.js on the admin port](phase-05-dashboard.md) | `c9645f8` |
-| 6 | [WebAuthn admin plane: passkeys, action-bound step-up, KMS-anchored passkey registry](phase-06-webauthn.md) ([manual Touch ID check](phase-06-manual-touchid.md)) | `7c2873d` |
+| 6 | [WebAuthn admin plane: passkeys, action-bound step-up, KMS-anchored passkey registry](phase-06-webauthn.md) ([manual Touch ID check](phase-06-manual-touchid.md)) | `7c2873d`, 6.1: `309377e` |
 | | [Glossary](GLOSSARY.md) | |
 
 ## How the whole system fits together

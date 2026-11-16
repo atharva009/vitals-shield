@@ -108,6 +108,8 @@ same transaction that reads the revoked entries.
 
 **CSRF (cross-site request forgery)** (Phase 6): Another site making the browser send a request that carries our cookie. Stopped by `SameSite=Strict` and an Origin check on every non-GET admin request (DECISIONS #59).
 
+**Deadlock** (Phase 6.1): Two transactions each holding a lock the other is waiting for. Postgres detects the cycle and aborts one with SQLSTATE 40P01. Prevented here by taking the audit advisory lock last (DECISIONS #67).
+
 **DEK (Device Enrollment Key)** (Phase 3): The wearable's long-lived P-256 key, kept in the simulator's key partition (`keys/dek.key`). It proves identity at enrollment and survives state resets. Its public key is anchored in `devices` by a KMS Key #4 signature.
 
 **Deny-list** (Phase 2): A set of things that are refused; anything not listed passes this check. `CertificateDenyList` holds revoked, expired, and superseded certificates in memory, keyed by issuer key hash and serial. A new certificate is not on it, so it connects immediately; the per-request DB check confirms its real status.
@@ -125,6 +127,8 @@ in DER, usually 70 to 72 bytes for P-256. X.509 certificates and CRLs use this f
 is `Enabled`.
 
 **Dev seed tool** (Phase 3): `./gradlew :server:seedDemoDevice`: creates a device, an ACTIVE assignment, and a bootstrap token in the local Compose database, with visibly fake WebAuthn fields. It refuses any other database and is never an HTTP endpoint (DECISIONS #32).
+
+**DEV_SEED passkey** (Phase 6.1): The seed tool's software passkey (`clinician_passkeys.purpose = 'DEV_SEED'`). It may only finish the seed tool's provisioning in the local profile; sign-in and step-up are refused (DECISIONS #66).
 
 **Digest** (Phase 1): The fixed-size output of a hash function. A SHA-256 digest is always 32 bytes, whatever the
 input size. We send KMS the 32-byte digest of the data to be signed instead of the data itself.
@@ -218,6 +222,8 @@ stops an attacker from moving bytes between adjacent fields. Our strings are wri
 **LocalStack** (Phase 0): A container that emulates AWS APIs locally. We run it with `SERVICES=kms` and an auth token
 from `.env`. It reproduces the KMS API, not HSM custody or IAM isolation, and loses its keys on restart unless
 persistence is enabled.
+
+**Lock ordering** (Phase 6.1): Acquiring locks in one fixed order in every transaction, so no cycle of waits can form. Our rule: row locks first, the `security_audit_log` advisory lock last.
 
 **Loopback** (Phase 2): The network interface that only reaches the same machine, address 127.0.0.1. A socket bound to it cannot be reached from another host. All our listeners bind it by default, and the admin listener always does.
 
