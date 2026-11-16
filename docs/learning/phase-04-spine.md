@@ -15,8 +15,11 @@ Retraction").
   verifies it, parses the payload strictly, and stores it with the spec's single-CTE replay window, unchanged.
 - **Quarantine**, `POST /api/v1/admin/devices/{id}/quarantine` on 8445 (`quarantine/QuarantineService`): revoke every
   certificate, close every socket, then run the spec's dual-timestamp sanitize statement.
+  Changed in Phase 6: in webauthn mode this single-step route is 404; quarantine is `quarantine/begin` plus
+  `quarantine/finish` with a passkey approval of the exact parameters (DECISIONS #58). Bearer mode keeps it.
 - **Admin auth** (DECISIONS #41): a boot-generated setup code in `var/admin/setup-code` is the bearer token for the
   admin API until WebAuthn.
+  Changed in Phase 6: in webauthn mode the code only registers the first passkey (DECISIONS #60).
 - **The serial reservation ledger** (DECISIONS #38): a new `issued_serials` table (migration V2) so every device
   serial the CA signs is either recorded or revocable.
 - **Simulator streaming mode**: `simulator run` sends one signed batch per second over a persistent mTLS connection.

@@ -20,6 +20,9 @@ from spec Section 3 and the rule that the CA ignores CSR attributes (Section 3, 
   `DerSignatures` (DER ECDSA sign and strict verify).
 - **A dev seed tool** (`./gradlew :server:seedDemoDevice`, DECISIONS #32) that stands in for the clinician's WebAuthn
   provisioning until Phase 6.
+  Changed in Phase 6: in webauthn mode (the default) the tool registers a software passkey (`var/devseed/passkey.key`,
+  KMS-anchored) and issues tokens through the real provisioning code, and Protocol A now re-verifies the stored
+  WebAuthn approval before any KMS call (DECISIONS #57). The fake-field path remains for `--auth bearer`.
 - **The simulator** (`simulator` module): enroll, persist keys and state like a wearable's flash, survive restarts
   without re-enrolling, and ping over mTLS.
 

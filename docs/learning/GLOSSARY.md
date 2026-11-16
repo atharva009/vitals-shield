@@ -25,6 +25,10 @@ ASN.1 value into bytes.
 filesystem operation. A reader sees either the whole old file or the whole new file, never a half-written one.
 `TrustFileWriter` writes the Root PEM this way with `ATOMIC_MOVE` and `REPLACE_EXISTING`.
 
+**Attestation** (Phase 6): An authenticator's signed statement of its own model, checked against a vendor root. We request "none" (DECISIONS #63): trust in a new passkey comes from who registered it.
+
+**authenticatorData** (Phase 6): Bytes built and signed by the authenticator: SHA-256 of the RP id, flags (UP, UV, AT, ...), a 4-byte signature counter, and at registration the credential id and COSE public key.
+
 **base64url** (Phase 4): Base64 with `-` and `_` instead of `+` and `/`, and no `=` padding, so the text is safe in URLs and headers. JWS parts and x5t#S256 use it.
 
 **Basic Constraints** (Phase 1): A certificate extension that says whether the subject is a CA (`CA:TRUE`) and so may
@@ -66,6 +70,8 @@ checks each link.
 
 **Clickjacking** (Phase 5): Loading a page inside an invisible frame on another site so a user clicks its buttons without knowing. `X-Frame-Options: DENY` and CSP `frame-ancestors 'none'` stop the dashboard (and its quarantine button) from being framed at all.
 
+**clientDataJSON** (Phase 6): JSON the browser builds for every WebAuthn call: type, challenge, and the page's origin. Its SHA-256 is part of what the authenticator signs, which is what makes passkeys phishing resistant.
+
 **Common table expression (CTE)** (Phase 4): A named sub-query introduced with `WITH`. In Postgres a CTE can itself be an UPDATE or INSERT; all parts run as one statement, so the spec's window update and telemetry insert commit or fail together.
 
 **Content Security Policy (CSP)** (Phase 5): A response header that tells the browser which sources a page may load scripts, styles, images, and connections from. The admin port sends `script-src 'self'` plus hashes, so injected inline script does not run.
@@ -75,6 +81,8 @@ output stream, then asks for the signature. It also reports which signature algo
 implements it by hashing locally and asking KMS to sign the digest.
 
 **CORS (Cross-Origin Resource Sharing)** (Phase 5): Headers by which a server allows pages from other origins to read its responses. The admin API sends none, so only pages from `http://127.0.0.1:8445` itself can read it.
+
+**COSE key** (Phase 6): A public key encoded as a CBOR map with integer labels (RFC 9052). For ES256: kty 2, alg -7, crv 1, x and y. Stored in `clinician_passkeys.public_key_cose_der_b64`.
 
 **Critical extension** (Phase 1): An extension marked so that a verifier that does not understand it must reject
 the certificate. Marking Basic Constraints and Key Usage critical means an old or partial verifier cannot silently
@@ -98,6 +106,8 @@ same transaction that reads the revoked entries.
 
 **CSR (Certificate Signing Request)** (Phase 3): A PKCS#10 document holding a public key, a requested name and extensions, and a signature by the matching private key. Our CA uses only the public key and checks the signature (proof of possession); everything else is ignored.
 
+**CSRF (cross-site request forgery)** (Phase 6): Another site making the browser send a request that carries our cookie. Stopped by `SameSite=Strict` and an Origin check on every non-GET admin request (DECISIONS #59).
+
 **DEK (Device Enrollment Key)** (Phase 3): The wearable's long-lived P-256 key, kept in the simulator's key partition (`keys/dek.key`). It proves identity at enrollment and survives state resets. Its public key is anchored in `devices` by a KMS Key #4 signature.
 
 **Deny-list** (Phase 2): A set of things that are refused; anything not listed passes this check. `CertificateDenyList` holds revoked, expired, and superseded certificates in memory, keyed by issuer key hash and serial. A new certificate is not on it, so it connects immediately; the per-request DB check confirms its real status.
@@ -118,6 +128,8 @@ is `Enabled`.
 
 **Digest** (Phase 1): The fixed-size output of a hash function. A SHA-256 digest is always 32 bytes, whatever the
 input size. We send KMS the 32-byte digest of the data to be signed instead of the data itself.
+
+**Discoverable credential** (Phase 6): A passkey stored with its user handle on the authenticator, so sign-in can start without a username (empty allowCredentials). Required here.
 
 **DN (Distinguished Name)** (Phase 1): The structured name of a certificate's subject or issuer, made of attributes
 such as `CN` (common name) and `O` (organization). Our Root DN is "CN=VitalsShield Root CA, O=VitalsShield". In DER it
@@ -160,6 +172,8 @@ runs if `spring-boot-starter-flyway` is on the classpath.
 **Golden vector** (Phase 1): A fixed input with a known correct output, computed by an independent implementation,
 used to check another implementation. `scripts/golden_vectors.py` (Python stdlib only) produces the expected hex that
 `CanonicalEncodingsTest` compares the Java output against.
+
+**Hash-chained audit log** (Phase 6): `security_audit_log`, where each entry's hash covers the previous entry's hash, so editing any row breaks every later hash. Appends hold `pg_advisory_xact_lock` (DECISIONS #62).
 
 **HSM (Hardware Security Module)** (Phase 1): A tamper-resistant device that generates and stores private keys and
 performs signing inside itself, so the key never leaves. AWS KMS keys are backed by HSMs. LocalStack is not: its keys
@@ -231,6 +245,10 @@ and exits 0 on success. `PkiOpensslIT` uses it as an independent check of our ce
 **P-256** (Phase 0): The NIST elliptic curve also called secp256r1 or prime256v1. It gives about 128-bit security
 with 32-byte private keys. KMS calls it `ECC_NIST_P256`.
 
+**Passkey** (Phase 6): A WebAuthn key pair for one site; on a Mac the private key is made by the Secure Enclave and synced in iCloud Keychain, and every use needs Touch ID. The server keeps only the public key.
+
+**Passkey anchor** (Phase 6): `passkey_registry_kms_sig`, a KMS Key #4 signature over PasskeyAnchorBytes (credential id, clinician id, key hash). Verified before every assertion, so an SQL-inserted or swapped passkey fails (DECISIONS #56).
+
 **Path traversal** (Phase 5): Using `..` (often percent-encoded as `..%2f`) in a URL to make a file server read outside its directory. `DashboardRoutes.resolve` decodes, normalizes, and checks the real path stays inside `dashboard/out`, answering 404 otherwise.
 
 **pathLenConstraint** (Phase 1): A field in Basic Constraints that limits how many CA certificates may appear below
@@ -276,6 +294,8 @@ refuses to start.
 
 **Registry anchor** (Phase 3): A KMS Key #4 signature over (device_id, SHA-256 of the DEK public key, provisioning time), stored in `devices.dek_registry_kms_sig`. It lets the server detect a DEK changed by SQL alone. It does not prove the device or key is genuine.
 
+**Relying party (RP) and RP ID** (Phase 6): The website that relies on WebAuthn, named by its RP ID, a domain ("localhost" here). An IP address cannot be an RP ID, so the admin plane runs at http://localhost:8445 (DECISIONS #55).
+
 **Replay window** (Phase 4): The 64-bit `replay_bitmap` plus `last_sequence_num` on each device: a sequence is accepted once if it is newer than the newest or at most 63 behind with its bit clear.
 
 **Request coalescing** (Phase 2.1): Merging many requests for the same expensive work into as few runs as possible. `CrlService` allows one CRL generation in flight; requests that arrive meanwhile set a flag that causes exactly one more run, so 10 concurrent revocations produced 2 new CRLs.
@@ -289,6 +309,8 @@ years, published to `var/trust/root-ca.pem`.
 **R||S** (Phase 1): The other common ECDSA signature format: r and s each as a fixed 32-byte big-endian number,
 concatenated into 64 bytes. JWS (`ES256`) uses this form. KMS returns DER, so a later phase must convert DER to R||S
 before putting a KMS signature into a JWS.
+
+**SameSite cookie** (Phase 6): A cookie attribute. `Strict` means the browser sends the cookie only on requests that start from the same site.
 
 **SAN (Subject Alternative Name)** (Phase 1): A certificate extension listing identities the certificate is for:
 DNS names, IP addresses, URIs, and more. TLS clients match the hostname against the SAN, not the CN. Our gateway leaf
@@ -320,6 +342,8 @@ zeros.
 **SHA-256** (Phase 0): A hash function with a 32-byte output. We use it for signature digests, SKIs (and so `issuer_key_hash`), and the
 fixed-width `sha256(...)` fields inside the canonical encodings.
 
+**Signature counter (signCount)** (Phase 6): A counter the authenticator includes in every assertion, for clone detection. Synced passkeys always send 0; we accept 0 and require any non-zero value to increase (DECISIONS #61).
+
 **SKI (Subject Key Identifier)** (Phase 1): A certificate extension holding an identifier for the certificate's own
 public key. A child certificate's AKI equals its issuer's SKI. Ours is the SHA-256 of the full SubjectPublicKeyInfo
 DER (32 bytes), and its hex is `issuer_key_hash`.
@@ -334,6 +358,8 @@ DER (32 bytes), and its hex is `issuer_key_hash`.
 **SslProvider** (Phase 2): Netty's choice of TLS implementation: `JDK` (Java's JSSE) or `OPENSSL` (native). We force `JDK` so our Java trust manager is called exactly as JSSE documents.
 
 **Static export** (Phase 5): Next.js `output: "export"`: the build writes plain HTML, JS, and CSS files and no server code runs. The Java server serves `dashboard/out/` on the admin port.
+
+**Step-up authentication** (Phase 6): A fresh approval right before a sensitive action. Here the challenge is a hash of the exact action and its stored parameters, so the approval cannot be reused or swapped (DECISIONS #58).
 
 **Sweep (serial sweep)** (Phase 4): Voiding every RESERVED serial older than 2 minutes, at boot (SERIALS_SWEPT) and on every stale token reclaim, so a crash between signing and activation still ends with a revocable serial.
 
@@ -355,9 +381,13 @@ Root and Device Intermediate for the Phase 2 trust manager.
 
 **Trust manager** (Phase 2): The Java object that decides whether a peer's certificate chain is acceptable during a TLS handshake. The JDK calls `checkClientTrusted` when the client's certificate arrives on a full handshake. Ours is `DynamicMtlsTrustManager`.
 
+**UP and UV flags** (Phase 6): authenticatorData bits: user present (someone touched it) and user verified (biometric or PIN). Both are required for every ceremony and re-checked by Protocol A.
+
 **Validity period** (Phase 1): The `notBefore` and `notAfter` times between which a certificate may be accepted. We
 set `notBefore` to now minus 60 seconds to absorb clock skew. The Root gets 10 years, intermediates 1 year, device
 leaves 12 hours, the gateway leaf 24 hours.
+
+**WebAuthn** (Phase 6): The W3C browser API (`navigator.credentials.create/get`) and protocol for public-key sign-in; the server side is the relying party. We use Yubico java-webauthn-server (DECISIONS #54).
 
 **WebFilter** (Phase 2): A Spring WebFlux component that runs before controllers and can pass the request on or answer it. `PortEnforcementWebFilter` runs first (404 for wrong ports), then `CertStatusResolver` (403 for unaccepted certificates).
 

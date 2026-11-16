@@ -23,6 +23,9 @@ on the admin port (8445, plain HTTP, bound to 127.0.0.1). 8443 and 8444 return 4
 - **The dashboard** (`dashboard/`): Next.js 16, App Router, TypeScript, `output: "export"`. One client page: sign-in
   with the setup code, header pills, a KMS banner, tiles, the trust chain, the devices table, the selected device with
   a heart-rate sparkline and its telemetry, the quarantine button with a confirm dialog, and the revocation log.
+  Changed in Phase 6: in webauthn mode the page is opened at `http://localhost:8445`, signs in with a passkey (HttpOnly
+  session cookie instead of the code in sessionStorage), quarantines through a Touch ID step-up, and adds provisioning,
+  restore, and audit panels; the setup-code screen remains in bearer mode.
 
 Small backend changes to feed the overview: `RevocationResult` now carries device, reason, and time;
 `revokeAllForDevice` measures latency once from the quarantine's `t0`; `CrlService.SignedCrl` carries its entry

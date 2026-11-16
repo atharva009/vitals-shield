@@ -15,6 +15,8 @@ spec Section 1 ("Multi-Port Listener Isolation"), Section 2 layer 1 ("Transport 
   - 8445: plain HTTP, always on 127.0.0.1. Serves `/api/v1/admin/boot-status` now; the dashboard later.
     Changed in Phase 5: 8445 also serves the dashboard's static files (any GET or HEAD outside `/api/`), and
     `PortEnforcementWebFilter` lets those paths through only on the admin port. 8443 and 8444 still 404 them.
+    Changed in Phase 6: the admin listener also binds `::1` on the same port, and in webauthn mode page requests
+    addressed to an IP get a 307 to `http://localhost:8445` (DECISIONS #55).
 - **Port enforcement** (`gateway/PortEnforcementWebFilter.java`): each port serves only its own paths; anything else
   is 404 with an empty body.
 - **An in-memory deny-list** (`pki/trust/CertificateDenyList.java`) seeded from the database at boot and refreshed

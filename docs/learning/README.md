@@ -15,6 +15,7 @@ from the spec.
 | 3 | [Protocol A enrollment, dev seed tool, simulator enroll and persistence](phase-03-enrollment.md) | `adb62df` |
 | 4 | [The thin spine: JWS ingest, replay window, quarantine, serial ledger](phase-04-spine.md) | `0c302cd` |
 | 5 | [Operator dashboard: overview API, KMS health monitor, Next.js on the admin port](phase-05-dashboard.md) | `c9645f8` |
+| 6 | [WebAuthn admin plane: passkeys, action-bound step-up, KMS-anchored passkey registry](phase-06-webauthn.md) ([manual Touch ID check](phase-06-manual-touchid.md)) | `7c2873d` |
 | | [Glossary](GLOSSARY.md) | |
 
 ## How the whole system fits together
@@ -64,4 +65,11 @@ reports HEALTHY, UNHEALTHY, or UNKNOWN; it never rebuilds. `DashboardRoutes` ser
 `dashboard/out` with traversal checks and a CSP that lists the SHA-256 of each inline script instead of allowing
 `'unsafe-inline'`. The page signs in with the setup code (kept in sessionStorage), polls the overview every 500 ms,
 and its only action is the existing quarantine, which now reports one latency measured from request receipt to every
-socket closed.
+socket closed. Phase 6 replaced the setup code with passkeys in the default `webauthn` mode. The dashboard runs at
+`http://localhost:8445` (the RP id is "localhost"), signs in with Touch ID into an HttpOnly, SameSite=Strict session
+cookie, and every non-GET admin request must carry the dashboard's Origin. Each passkey row carries a KMS Key #4
+anchor that is checked before every assertion. Provisioning makes the clinician approve the ProvisioningDigest of the
+new token, and Protocol A re-verifies that stored approval before any KMS signature, so an SQL-written token cannot
+enroll. Quarantine and restore need a fresh approval over a hash of the exact action. Registrations, provisioning,
+assignments, quarantines, and restores are written to a hash-chained `security_audit_log`. `vitalsshield.admin.auth=bearer`
+keeps the Phase 5 behavior.
