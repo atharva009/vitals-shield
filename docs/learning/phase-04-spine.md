@@ -156,6 +156,11 @@ record the batches that triggered them (`triggering_batch_ids`). When quarantine
 This keeps the clinician's queue clean without deleting valid alerts (spec Section 1, "Lineage-Tracked Alert
 Retraction").
 
+Changed in Phase 7: the clinical engine now creates the baselines and alerts this CTE acts on
+([phase-07-clinical.md](phase-07-clinical.md)). The only change to the CTE text is that `tainted_baselines` also
+zeroes the four V5 streak columns (`degraded_critical_streak`, `degraded_critical_batch_ids`, `drift_breach_streak`,
+`drift_breach_batch_ids`).
+
 ### The READ COMMITTED snapshot rule behind DECISIONS #42
 
 In Postgres READ COMMITTED, each statement sees the data committed before that statement started. Two transactions in
@@ -383,7 +388,9 @@ Not defended:
   publishes no CRL. Each lives 24 h and its key never leaves memory.
 - **The setup code as the only admin authentication** until Phase 6. Anyone who can read `var/admin/setup-code` (mode
   600, same user) can quarantine devices.
-- **Clinical meaning.** Classification is plausibility and perfusion only (DECISIONS #46).
+- **Clinical meaning.** Classification is plausibility and perfusion only (DECISIONS #46). Changed in Phase 7: the
+  bounds come from `vitalsshield.clinical.*`, and activity context, acute, calibration, and drift rules run after each
+  ingest commit in `ClinicalEvaluator` (DECISIONS #68 to #73).
 
 ## 6. Design decisions
 

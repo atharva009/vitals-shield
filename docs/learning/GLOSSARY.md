@@ -2,6 +2,8 @@
 
 Alphabetical. The tag after each term is the phase that introduced it in this codebase.
 
+**Activity context** (Phase 7): `RESTING` or `EXERTION`, stored per batch in `telemetry_records.activity_context`. RESTING needs cadence 0 and motion below 0.05 g continuously for 5 minutes of measured time; anything else, including a still batch before 5 minutes have passed, is EXERTION.
+
 **Advisory lock** (Phase 1): A PostgreSQL lock on an arbitrary number that the application chooses, not on a row or
 table. `pg_advisory_xact_lock(n)` holds it until the transaction ends. `HierarchyReconciler` takes one so two
 processes cannot commit a rebuild at the same time.
@@ -10,7 +12,13 @@ processes cannot commit a rebuild at the same time.
 signed the certificate. It is how a verifier finds the right issuer certificate. Ours holds only the `keyIdentifier`
 field (the issuer's SKI), with no issuer name or serial.
 
+**Alert dedupe** (Phase 7): Not raising the same alert again while an equal one is still open. Acute alerts are suppressed for 5 minutes of measured time per assignment and condition code; the low-perfusion alert fires once per streak (DECISIONS #71).
+
+**Alert lineage** (Phase 7): The record of what an alert was computed from: `triggering_batch_ids` (the batches) and, for drift alerts, `baseline_version` (the baseline). Quarantine uses it to retract exactly the alerts built on quarantined data.
+
 **Allow-list** (Phase 2): A set of things that are permitted; anything not listed is refused. For certificates, an in-memory allow-list must be refreshed to learn about new certificates, so a device that enrolls and connects before the next refresh is wrongly refused. VitalsShield does not use one in the handshake path for that reason.
+
+**Append-only table** (Phase 7): A table whose rows can be inserted and read but not changed or removed. `security_audit_log` enforces it with BEFORE UPDATE, DELETE, and TRUNCATE triggers that raise `security_audit_log is append-only` (DECISIONS #75).
 
 **ARN (Amazon Resource Name)** (Phase 0): AWS's full identifier for a resource, for example
 `arn:aws:kms:us-east-1:000000000000:key/857ab58e-...`. It includes the service, region, account, and key ID. We store
@@ -31,6 +39,8 @@ filesystem operation. A reader sees either the whole old file or the whole new f
 
 **base64url** (Phase 4): Base64 with `-` and `_` instead of `+` and `/`, and no `=` padding, so the text is safe in URLs and headers. JWS parts and x5t#S256 use it.
 
+**Baseline (personal resting baseline)** (Phase 7): The mean and SD of one patient's HR, HRV, and SpO2 over their first calibration window of trusted resting batches. Drift is measured against it, not against population limits. CALIBRATING until the window fills, then LOCKED; a quarantine that touches its batches resets it to CALIBRATING with version + 1.
+
 **Basic Constraints** (Phase 1): A certificate extension that says whether the subject is a CA (`CA:TRUE`) and so may
 sign other certificates. A verifier must reject any chain where a non-CA certificate signed another certificate. We
 mark it critical on every certificate.
@@ -50,6 +60,8 @@ JDBC or a synchronous HTTP call. Moving a blocking call onto it keeps event loop
 **CA (Certificate Authority)** (Phase 1): An entity whose signature on a certificate vouches that the public key in
 it belongs to the named subject. A CA has its own key pair and its own certificate with `CA:TRUE`. Our CAs are the
 Root, the Device Issuing Intermediate, and the Server TLS CA.
+
+**Calibration window** (Phase 7): The number of resting batches a baseline is computed from: `vitalsshield.clinical.calibration-size`, 30 by default and 10 in the demo (`local`) profile.
 
 **Canonical encoding** (Phase 0): A single, exact way to turn structured data into bytes, so two parties produce the
 same bytes for the same values. Signatures are over bytes, so the layout must be fixed. `CanonicalEncodings` defines
@@ -73,6 +85,8 @@ checks each link.
 **clientDataJSON** (Phase 6): JSON the browser builds for every WebAuthn call: type, challenge, and the page's origin. Its SHA-256 is part of what the authenticator signs, which is what makes passkeys phishing resistant.
 
 **Common table expression (CTE)** (Phase 4): A named sub-query introduced with `WITH`. In Postgres a CTE can itself be an UPDATE or INSERT; all parts run as one statement, so the spec's window update and telemetry insert commit or fail together.
+
+**Compressed clock** (Phase 7): The simulator's measured_at: 60 s after the previous batch, never more than 12 h ago, never later than now (DECISIONS #6, #74). About one batch per real second covers a minute of clinical time.
 
 **Content Security Policy (CSP)** (Phase 5): A response header that tells the browser which sources a page may load scripts, styles, images, and connections from. The admin port sends `script-src 'self'` plus hashes, so injected inline script does not run.
 
@@ -172,6 +186,10 @@ the local profile" and the app does not start.
 **Flyway** (Phase 0): A database migration tool. It runs numbered SQL files (`V1__baseline.sql`, ...) in order at
 startup and records each in the `flyway_schema_history` table so it never runs one twice. In Spring Boot 4 it only
 runs if `spring-boot-starter-flyway` is on the classpath.
+
+**FOR KEY SHARE** (Phase 7): The weakest Postgres row lock. It blocks only changes to the row's key and deletion (and FOR UPDATE). The clinical evaluator takes it on the devices row, so it never waits for an ingest's UPDATE of that row but does wait for quarantine's FOR UPDATE.
+
+**FOR NO KEY UPDATE** (Phase 7): The row lock an UPDATE of non-key columns takes. It conflicts with other updates and FOR UPDATE but not with FOR KEY SHARE, which is what a foreign key check takes. The evaluator locks the assignment row this way (DECISIONS #70).
 
 **Golden vector** (Phase 1): A fixed input with a known correct output, computed by an independent implementation,
 used to check another implementation. `scripts/golden_vectors.py` (Python stdlib only) produces the expected hex that
@@ -318,6 +336,8 @@ before putting a KMS signature into a JWS.
 
 **SameSite cookie** (Phase 6): A cookie attribute. `Strict` means the browser sends the cookie only on requests that start from the same site.
 
+**Sample standard deviation** (Phase 7): The spread of a set of values, sqrt(sum((x - mean)^2) / (n - 1)). Dividing by n - 1 instead of n corrects for estimating the mean from the same sample.
+
 **SAN (Subject Alternative Name)** (Phase 1): A certificate extension listing identities the certificate is for:
 DNS names, IP addresses, URIs, and more. TLS clients match the hostname against the SAN, not the CN. Our gateway leaf
 has `DNS:localhost, IP:127.0.0.1`; our device leaf has `URI:urn:vitalsshield:device:<device_id>`.
@@ -326,6 +346,8 @@ has `DNS:localhost, IP:127.0.0.1`; our device leaf has `URI:urn:vitalsshield:dev
 days. During the wait the key is in state `PendingDeletion` and cannot sign. Our tests use it to simulate key loss.
 
 **Scoped alert retraction** (Phase 4): Retracting only alerts triggered by quarantined batches or drift alerts computed against a tainted baseline version, leaving unrelated alerts active.
+
+**SD floor** (Phase 7): A minimum for a calibrated SD (HR 1.0 bpm, HRV 1.0 ms, SpO2 0.5 pct). Without it a very flat calibration gives a tiny SD and turns ordinary noise into huge z-scores.
 
 **Secure element** (Phase 3): A tamper-resistant chip in a device (for example an ATECC608) that stores keys and signs without exposing them. Our simulated wearable has none, so its DEK is a file that can be copied.
 
@@ -367,6 +389,8 @@ DER (32 bytes), and its hex is `issuer_key_hash`.
 
 **Step-up authentication** (Phase 6): A fresh approval right before a sensitive action. Here the challenge is a hash of the exact action and its stored parameters, so the approval cannot be reused or swapped (DECISIONS #58).
 
+**Streak** (Phase 7): A count of consecutive qualifying batches for one assignment, kept on `patient_device_assignments` with the batch ids: the low-perfusion streak (3 fires) and the drift streak (4 fires).
+
 **Sweep (serial sweep)** (Phase 4): Voiding every RESERVED serial older than 2 minutes, at boot (SERIALS_SWEPT) and on every stale token reclaim, so a crash between signing and activation still ends with a revocable serial.
 
 **TBS (to-be-signed)** (Phase 1): The part of a certificate or CRL that the signature covers: everything except the
@@ -407,3 +431,5 @@ example, it rejects a non-root certificate without an Authority Key Identifier a
 Key Identifier. We run every chain check with it so lenient defaults cannot hide a profile mistake.
 
 **x5t#S256** (Phase 3): A JWS header value: base64url SHA-256 of the signer's certificate DER, 43 characters, no padding (RFC 7515). We store exactly this in `certificates.cert_thumbprint_s256` (DECISIONS #35).
+
+**z-score** (Phase 7): How many SDs a value is from the baseline mean: (x - mean) / SD. Drift needs 2 of z_HR >= +2.0, z_HRV <= -1.8, z_SpO2 <= -1.5 on 4 resting batches in a row.

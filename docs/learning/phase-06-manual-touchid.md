@@ -23,6 +23,10 @@ Terminals: **A** server, **B** simulator, **C** commands. Run everything from th
 
 ## 1. Reset the passkey table (only if `passkeys_registered` is not 0)
 
+Changed in Phase 7: for a full clean slate, stop the server and run `scripts/reset-demo-state.sh` instead (it drops the
+Compose Postgres volume; audit rows can no longer be deleted, DECISIONS #75). The SQL below still works for passkeys
+only.
+
 The setup code registers a passkey only while no clinician passkey exists (DECISIONS #60). DEV_SEED passkeys
 (`purpose = 'DEV_SEED'`) do not count (DECISIONS #64, #66) and are kept.
 

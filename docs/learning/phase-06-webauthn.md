@@ -435,6 +435,10 @@ Protocol A recomputes it from the stored value.
 strings, integers, booleans, maps; JSONB's own reformatting does not matter because verification re-canonicalizes the
 parsed value.
 
+Changed in Phase 7: the table is append-only. V5 triggers reject UPDATE, DELETE, and TRUNCATE with
+`security_audit_log is append-only` (DECISIONS #75), and new events ALERT_ACKNOWLEDGED and ALERT_RESOLVED are written
+by `AlertService` (DECISIONS #76).
+
 ### In memory
 
 - `CeremonyStore` (one per ceremony kind): 2-minute TTL, single use; registration and sign-in keyed by challenge,

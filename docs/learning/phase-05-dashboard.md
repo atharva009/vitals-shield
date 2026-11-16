@@ -26,6 +26,9 @@ on the admin port (8445, plain HTTP, bound to 127.0.0.1). 8443 and 8444 return 4
   Changed in Phase 6: in webauthn mode the page is opened at `http://localhost:8445`, signs in with a passkey (HttpOnly
   session cookie instead of the code in sessionStorage), quarantines through a Touch ID step-up, and adds provisioning,
   restore, and audit panels; the setup-code screen remains in bearer mode.
+  Changed in Phase 7: active and retracted alert tiles, a baseline card and activity, z-score, and "unevaluated"
+  columns for the selected device, a clinical alerts panel with Acknowledge and Resolve, and an amber
+  NEEDS ATTENTION chip (DECISIONS #77).
 
 Small backend changes to feed the overview: `RevocationResult` now carries device, reason, and time;
 `revokeAllForDevice` measures latency once from the quarantine's `t0`; `CrlService.SignedCrl` carries its entry

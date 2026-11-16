@@ -16,6 +16,7 @@ from the spec.
 | 4 | [The thin spine: JWS ingest, replay window, quarantine, serial ledger](phase-04-spine.md) | `0c302cd` |
 | 5 | [Operator dashboard: overview API, KMS health monitor, Next.js on the admin port](phase-05-dashboard.md) | `c9645f8` |
 | 6 | [WebAuthn admin plane: passkeys, action-bound step-up, KMS-anchored passkey registry](phase-06-webauthn.md) ([manual Touch ID check](phase-06-manual-touchid.md)) | `7c2873d`, 6.1: `309377e` |
+| 7 | [Clinical engine: activity context, acute and drift alerts with lineage, compressed clock](phase-07-clinical.md) | `5fc4a79` |
 | | [Glossary](GLOSSARY.md) | |
 
 ## How the whole system fits together
@@ -73,3 +74,11 @@ new token, and Protocol A re-verifies that stored approval before any KMS signat
 enroll. Quarantine and restore need a fresh approval over a hash of the exact action. Registrations, provisioning,
 assignments, quarantines, and restores are written to a hash-chained `security_audit_log`. `vitalsshield.admin.auth=bearer`
 keeps the Phase 5 behavior.
+Phase 7 added the clinical engine. After each ingest commit, `ClinicalEvaluator` classifies the batch as RESTING or
+EXERTION (5 sustained minutes of stillness), raises deduplicated acute and low-perfusion alerts, calibrates a personal
+resting baseline from 10 (demo) or 30 trusted resting batches, and raises drift alerts on z-scores against it, each
+alert recording its triggering batches and, for drift, its baseline version. Every transaction follows one lock order
+(devices, telemetry, assignments, alerts, audit lock last), so a quarantine either sees an evaluation's alert and
+retracts it or the evaluation sees the device is no longer ACTIVE. The audit log is append-only by trigger, demo resets
+drop the Compose Postgres volume, and the simulator's compressed clock (one batch per second, one minute apart in
+measured time) is persisted and drives five switchable scenarios.
