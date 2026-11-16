@@ -92,3 +92,10 @@
   from { background-color: var(--flash); }
   to { background-color: transparent; }
 }
+
+.provisionForm { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; align-items: end; }
+.provisionForm label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+.tokenBox { margin-top: 12px; padding: 12px; border: 1px solid var(--warn); border-radius: 8px; display: grid; gap: 8px; }
+.tokenRow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.tokenRow code { word-break: break-all; font-size: 14px; }
+.approved { color: var(--muted); font-size: 13px; }

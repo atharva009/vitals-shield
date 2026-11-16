@@ -23,6 +23,11 @@ dependencies {
     implementation libs.aws.url.connection.client
     implementation libs.bcpkix
     implementation libs.nimbus.jose.jwt
+    // WebAuthn (DECISIONS #54). It brings Jackson 2 (com.fasterxml) at runtime; no app class imports it.
+    implementation libs.yubico.webauthn.server.core
+    // Only so javac can see the library's declared JsonProcessingException (an IOException); never imported
+    // (NoJackson2ImportsTest).
+    compileOnly 'com.fasterxml.jackson.core:jackson-core'
 
     testImplementation project(':simulator')
     testImplementation libs.spring.boot.starter.webflux.test

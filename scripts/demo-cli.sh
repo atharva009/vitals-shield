@@ -4,14 +4,16 @@
 # terminal.
 #
 #   DEMO_PAUSE=2          seconds between steps
-#   DEMO_QUARANTINE=ui    wait for the operator to press Quarantine on the dashboard instead of using curl
+#   DEMO_QUARANTINE=ui    (default) wait for the operator to press Quarantine on the dashboard (Touch ID step-up)
+#   DEMO_QUARANTINE=curl  single-step curl quarantine with the setup code; bearer mode only
+#                         (vitalsshield.admin.auth=bearer, DECISIONS #60)
 #   DEMO_DEVICE=dev_wearable_019
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 PAUSE="${DEMO_PAUSE:-2}"
-MODE="${DEMO_QUARANTINE:-curl}"
+MODE="${DEMO_QUARANTINE:-ui}"
 DEVICE="${DEMO_DEVICE:-dev_wearable_019}"
 SIM=simulator/build/install/simulator/bin/simulator
 ADMIN=http://127.0.0.1:8445
@@ -57,7 +59,12 @@ step "Preflight"
 curl -sf -o /dev/null "$ADMIN/api/v1/admin/boot-status" || fail "server not reachable on $ADMIN (start bootRun first)"
 [ -r "$CODE_FILE" ] || fail "$CODE_FILE not readable (has the server finished booting?)"
 [ -r "$TRUST" ] || fail "$TRUST missing"
-echo "server up on 8445; trust anchor $TRUST"
+AUTH_MODE="$(curl -sf "$ADMIN/api/v1/admin/auth/status" | sed -n 's/.*"mode":"\([a-z]*\)".*/\1/p')"
+[ -n "$AUTH_MODE" ] || fail "cannot read $ADMIN/api/v1/admin/auth/status"
+echo "server up on 8445 (admin auth mode: $AUTH_MODE); trust anchor $TRUST"
+if [ "$MODE" = "curl" ] && [ "$AUTH_MODE" != "bearer" ]; then
+    fail "DEMO_QUARANTINE=curl needs the server in bearer mode (--vitalsshield.admin.auth=bearer). In webauthn mode quarantine requires a passkey step-up: run with DEMO_QUARANTINE=ui and use the dashboard at http://localhost:8445"
+fi
 if [ ! -x "$SIM" ]; then
     echo "building simulator binary (installDist)"
     ./gradlew -q :simulator:installDist
@@ -65,8 +72,10 @@ fi
 echo "simulator binary: $SIM"
 
 # ---------------------------------------------------------------------------------------------------------------
-step "Seed $DEVICE (dev seed tool: device, assignment, bootstrap token)"
-SEED_OUT="$(./gradlew -q :server:seedDemoDevice)"
+step "Seed $DEVICE (dev seed tool, $AUTH_MODE mode: device, assignment, bootstrap token)"
+# webauthn mode: the dev-seed software passkey (var/devseed/passkey.key) approves the ProvisioningDigest, so the token
+# passes the same Protocol A re-verification as a Touch ID approval (DECISIONS #57).
+SEED_OUT="$(./gradlew -q :server:seedDemoDevice --args="--device-id $DEVICE --auth $AUTH_MODE")"
 TOKEN="$(printf '%s\n' "$SEED_OUT" | sed -n 's/^BOOTSTRAP_TOKEN=//p' | head -1)"
 [ -n "$TOKEN" ] || fail "seedDemoDevice printed no BOOTSTRAP_TOKEN"
 echo "bootstrap token issued (${#TOKEN} chars, single use)"
@@ -98,7 +107,7 @@ grep '^SENT' "$LOG" | head -10
 # ---------------------------------------------------------------------------------------------------------------
 if [ "$MODE" = "ui" ]; then
     step "Quarantine from the dashboard"
-    echo "Quarantine the device from the dashboard now (http://127.0.0.1:8445)"
+    echo "Quarantine the device from the dashboard now (http://localhost:8445): select $DEVICE, Quarantine, Touch ID"
     echo "waiting for the simulator to be cut off..."
 else
     step "Quarantine $DEVICE (admin API, bearer from $CODE_FILE)"

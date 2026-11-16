@@ -55,8 +55,14 @@ public final class SpineFixture {
                 Clock.systemUTC());
     }
 
+    /** Bearer mode: a dev seed token with fake WebAuthn fields. */
     public Device enroll(String deviceId) {
-        String token = new DevSeeder(jdbc, tx, Clock.systemUTC()).seed(DevSeeder.Request.defaults(deviceId)).token();
+        return enrollWithToken(deviceId,
+                new DevSeeder(jdbc, tx, Clock.systemUTC()).seed(DevSeeder.Request.defaults(deviceId)).token());
+    }
+
+    /** Any mode: enroll with a token issued elsewhere (webauthn mode: provisioned through the admin API). */
+    public Device enrollWithToken(String deviceId, String token) {
         Simulator sim = simulator(deviceId);
         try {
             Simulator.EnrollOutcome o = sim.enroll(token);

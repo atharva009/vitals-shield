@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { ALL_BOOT_STEPS, api, Overview, Quarantine, TelemetryRow, Unauthorized } from "./api";
+import { ALL_BOOT_STEPS, api, AuthStatus, Overview, Quarantine, SESSION, TelemetryRow, Unauthorized } from "./api";
+import { AuditPanel, PasskeySignIn, ProvisionPanel, stepUp } from "./passkeys";
 import s from "./page.module.css";
 import { read, subscribe, UNKNOWN, write } from "./storage";
 
@@ -166,6 +167,8 @@ export default function Page() {
   const [result, setResult] = useState<Quarantine | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
+  const [clinician, setClinician] = useState<string | null>(null);
   const overviewInFlight = useRef(false);
   const telemetryInFlight = useRef(false);
 
@@ -175,12 +178,45 @@ export default function Page() {
 
   const setHighContrast = (on: boolean) => write("local", CONTRAST_KEY, on ? "1" : "0");
 
+  // Which admin plane is this (DECISIONS #60)? In webauthn mode a live session cookie skips the sign-in screen.
+  const [statusVersion, setStatusVersion] = useState(0);
+  const reloadStatus = useCallback(() => setStatusVersion((v) => v + 1), []);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/v1/admin/auth/status", { cache: "no-store", credentials: "same-origin" })
+      .then((r) => r.json() as Promise<AuthStatus>)
+      .then((st) => {
+        if (cancelled) return;
+        setAuthStatus(st);
+        const stored = read("session", CODE_KEY);
+        if (st.mode === "webauthn") {
+          if (st.clinician_id) {
+            setClinician(st.clinician_id);
+            write("session", CODE_KEY, SESSION);
+          } else if (stored) {
+            write("session", CODE_KEY, null);
+          }
+        } else if (stored === SESSION) {
+          write("session", CODE_KEY, null);
+        }
+      })
+      .catch(() => setAuthStatus({ mode: "bearer" }));
+    return () => {
+      cancelled = true;
+    };
+  }, [statusVersion]);
+
   const signOut = useCallback((message: string | null = null) => {
+    if (read("session", CODE_KEY) === SESSION) {
+      // Re-read the status after logout: the passkey count may have changed since the page loaded.
+      void fetch("/api/v1/admin/session/logout", { method: "POST", credentials: "same-origin" }).finally(reloadStatus);
+      setClinician(null);
+    }
     write("session", CODE_KEY, null);
     setOverview(null);
     setSelected(null);
     setSignInError(message);
-  }, []);
+  }, [reloadStatus]);
 
   const onCode = useCallback((c: string) => {
     setSignInError(null);
@@ -241,11 +277,15 @@ export default function Page() {
     setBusy(true);
     setActionError(null);
     try {
-      const r = await api<Quarantine>(code, `/api/v1/admin/devices/${encodeURIComponent(selected)}/quarantine`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lookback_minutes: lookback, reason }),
-      });
+      const path = `/api/v1/admin/devices/${encodeURIComponent(selected)}/quarantine`;
+      // Webauthn mode: begin -> Touch ID over the action digest -> finish (DECISIONS #58). Bearer mode: Phase 5.
+      const r =
+        code === SESSION
+          ? await stepUp<Quarantine>(`${path}/begin`, { lookback_minutes: lookback, reason }, `${path}/finish`)
+          : await api<Quarantine>(code, path, {
+              method: "POST",
+              body: JSON.stringify({ lookback_minutes: lookback, reason }),
+            });
       setResult(r);
       setConfirmOpen(false);
     } catch (e) {
@@ -257,7 +297,38 @@ export default function Page() {
     }
   };
 
-  if (code === UNKNOWN) return null; // prerender and hydration: storage is not readable yet
+  const auditUnauthorized = useCallback(() => signOut("Session expired."), [signOut]);
+
+  const restore = async (deviceId: string) => {
+    setBusy(true);
+    setActionError(null);
+    try {
+      const path = `/api/v1/admin/devices/${encodeURIComponent(deviceId)}/restore-active`;
+      await stepUp(`${path}/begin`, {}, `${path}/finish`);
+    } catch (e) {
+      if (e instanceof Unauthorized) signOut("Session expired.");
+      const body = (e as { body?: { error?: string } }).body;
+      setActionError(body?.error ?? (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (code === UNKNOWN || !authStatus) return null; // prerender and hydration: storage is not readable yet
+  if (authStatus.mode === "webauthn" && code !== SESSION) {
+    return (
+      <PasskeySignIn
+        status={authStatus}
+        error={signInError}
+        onSignedIn={(c) => {
+          setClinician(c);
+          setSignInError(null);
+          write("session", CODE_KEY, SESSION);
+          reloadStatus();
+        }}
+      />
+    );
+  }
   if (!code) return <SignIn onCode={onCode} error={signInError} />;
 
   const o = overview;
@@ -293,6 +364,7 @@ export default function Page() {
         <label className={s.toggle}>
           <input type="checkbox" checked={highContrast} onChange={(e) => setHighContrast(e.target.checked)} /> High contrast
         </label>
+        {clinician && <span className={s.clock}>signed in as {clinician}</span>}
         <button className={s.ghost} onClick={() => signOut()}>
           Sign out
         </button>
@@ -454,6 +526,11 @@ export default function Page() {
             <h2>
               {device.device_id} {device.dev_seed && <span className={s.badge}>DEV SEED</span>}
             </h2>
+            {code === SESSION && device.trust_state === "REAUTH_REQUIRED" && (
+              <button className={s.primary} disabled={busy} onClick={() => void restore(device.device_id)}>
+                {busy ? "Waiting for Touch ID…" : "Restore"}
+              </button>
+            )}
             <button
               className={s.danger}
               disabled={device.trust_state !== "ACTIVE" && device.trust_state !== "REAUTH_REQUIRED"}
@@ -491,6 +568,7 @@ export default function Page() {
                 {result.batches_quarantined} batches quarantined · {result.baselines_reset} baselines reset ·{" "}
                 {result.alerts_retracted} alerts retracted
               </div>
+              {result.approved_by && <div className={s.approved}>approved by {result.approved_by} (passkey step-up)</div>}
             </div>
           )}
           <div className={s.sparkRow}>
@@ -527,6 +605,8 @@ export default function Page() {
           </table>
         </section>
       )}
+
+      {code === SESSION && <ProvisionPanel onUnauthorized={() => signOut("Session expired.")} />}
 
       <section className={s.panel}>
         <h2>Revocation log</h2>
@@ -565,6 +645,8 @@ export default function Page() {
         </table>
       </section>
 
+      {code === SESSION && <AuditPanel onUnauthorized={auditUnauthorized} />}
+
       {confirmOpen && device && (
         <div className={s.modalBack} role="dialog" aria-modal="true" aria-label="Confirm quarantine">
           <div className={s.modal}>
@@ -590,7 +672,7 @@ export default function Page() {
                 Cancel
               </button>
               <button className={s.danger} onClick={quarantine} disabled={busy || !reason.trim() || lookback < 1 || lookback > 1440}>
-                {busy ? "Quarantining…" : "Quarantine now"}
+                {busy ? (code === SESSION ? "Waiting for Touch ID…" : "Quarantining…") : code === SESSION ? "Approve quarantine with passkey" : "Quarantine now"}
               </button>
             </div>
           </div>

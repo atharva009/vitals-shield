@@ -15,20 +15,25 @@ import reactor.core.publisher.Mono;
 
 /**
  * Admin port: every /api/v1/admin/** request except GET /api/v1/admin/boot-status needs
- * {@code Authorization: Bearer <setup code>} (DECISIONS #41). Missing or wrong: 401 with an empty body.
+ * {@code Authorization: Bearer <setup code>} (DECISIONS #41). Missing or wrong: 401 with an empty body. Bearer mode
+ * only ({@code vitalsshield.admin.auth=bearer}); in webauthn mode {@code AdminSessionWebFilter} applies.
  */
 @Component
 public class AdminAuthWebFilter implements WebFilter, Ordered {
 
     static final String PREFIX = "/api/v1/admin/";
     static final String OPEN_PATH = "/api/v1/admin/boot-status";
+    static final String AUTH_STATUS_PATH = "/api/v1/admin/auth/status";
 
     private final ListenerProperties listeners;
     private final AdminSetupCode setupCode;
 
-    public AdminAuthWebFilter(ListenerProperties listeners, AdminSetupCode setupCode) {
+    private final AdminProperties admin;
+
+    public AdminAuthWebFilter(ListenerProperties listeners, AdminSetupCode setupCode, AdminProperties admin) {
         this.listeners = listeners;
         this.setupCode = setupCode;
+        this.admin = admin;
     }
 
     @Override
@@ -40,11 +45,15 @@ public class AdminAuthWebFilter implements WebFilter, Ordered {
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
         InetSocketAddress local = exchange.getRequest().getLocalAddress();
         String path = exchange.getRequest().getPath().pathWithinApplication().value();
+        if (admin.webauthn()) {
+            return chain.filter(exchange); // AdminSessionWebFilter owns webauthn mode
+        }
         if (local == null || local.getPort() != listeners.adminPort()
                 || !(path.startsWith(PREFIX) || path.equals("/api/v1/admin"))) {
             return chain.filter(exchange);
         }
-        if (HttpMethod.GET.equals(exchange.getRequest().getMethod()) && OPEN_PATH.equals(path)) {
+        if (HttpMethod.GET.equals(exchange.getRequest().getMethod())
+                && (OPEN_PATH.equals(path) || AUTH_STATUS_PATH.equals(path))) {
             return chain.filter(exchange);
         }
         String auth = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);

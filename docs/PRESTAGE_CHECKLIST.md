@@ -18,3 +18,8 @@ Run through this before the demo slot. Later phases append to it.
       `BUILD FAILED`.
 - [ ] Build the dashboard (`cd dashboard && npm ci && npm run build`) and open `http://127.0.0.1:8445/` once to
       confirm it loads and signs in.
+- [ ] Phase 6 (webauthn mode, the default): open the dashboard at `http://localhost:8445` (not 127.0.0.1; the passkey
+      RP id is "localhost"). Register the presenter's passkey with the setup code before the slot and sign in once
+      with Touch ID; after that the setup code no longer works for anything (DECISIONS #60). Sessions are in memory:
+      a server restart means signing in again. `scripts/demo-cli.sh` now waits for the dashboard quarantine (Touch
+      ID); its curl mode works only with `--vitalsshield.admin.auth=bearer`, the cut path.

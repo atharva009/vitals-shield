@@ -86,7 +86,7 @@ The dashboard is a Next.js static export served by the server itself, only on th
 ```sh
 cd dashboard && npm ci && npm run build   # writes dashboard/out (gitignored)
 ./gradlew :server:bootRun --args='--spring.profiles.active=local'
-open http://127.0.0.1:8445/               # paste the contents of var/admin/setup-code
+open http://localhost:8445/               # Phase 6: first run registers a passkey with var/admin/setup-code
 ```
 
 If `dashboard/out` does not exist, `/` on 8445 answers `dashboard not built: run npm run build in dashboard/`. The
@@ -108,4 +108,13 @@ Demos use this binary, never `./gradlew :simulator:run`: after a quarantine the 
 and Gradle reports a non-zero exit as `BUILD FAILED`. `scripts/demo-cli.sh` runs the whole CLI demo (seed, enroll,
 stream, quarantine, CRL check); set `DEMO_QUARANTINE=ui` to click the dashboard button instead of using curl, and
 `DEMO_PAUSE` to change the 2 s pause between steps.
+
+## Admin plane (Phase 6)
+
+`vitalsshield.admin.auth` is `webauthn` by default: the dashboard at `http://localhost:8445` signs in with a passkey
+(Touch ID), and provisioning, quarantine, and restore each need a fresh passkey approval of that exact action. The
+setup code in `var/admin/setup-code` only registers the first passkey. `--vitalsshield.admin.auth=bearer` restores the
+Phase 5 setup-code behavior. The manual Touch ID walkthrough is `docs/learning/phase-06-manual-touchid.md`.
+`./gradlew :server:seedDemoDevice` (default `--auth webauthn`) provisions with a software passkey kept in
+`var/devseed/passkey.key`.
 

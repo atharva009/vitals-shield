@@ -15,7 +15,12 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * Dev-only stand-in for clinician provisioning until Phase 6 (DECISIONS #32). One transaction upserts a fake
+ * Dev seed tool. {@link #seedWebAuthn} (webauthn mode, DECISIONS #57): a software passkey "dev-seed" registered
+ * through the server's own registration logic (KMS Key #4 anchor), then a token issued through the server's own
+ * provisioning logic with a software assertion, so Protocol A re-verifies it like any other. {@link #seed} below is
+ * the bearer-mode path (Phase 3 to 5 behavior, kept for the cut path):
+ *
+ * <p>Dev-only stand-in for clinician provisioning until Phase 6 (DECISIONS #32). One transaction upserts a fake
  * clinician passkey, the device, an ACTIVE assignment, and a fresh bootstrap token. Every WebAuthn field is visibly
  * fake. The SQL lives only here: the CLI ({@link SeedDemoDevice}) and the integration tests both call it.
  */
@@ -48,6 +53,43 @@ public final class DevSeeder {
         this.clock = clock;
     }
 
+    /**
+     * Webauthn mode. Loads or creates the software passkey at {@code keyFile} (permissions 600), registers it if the
+     * database does not know it, then provisions {@code req.deviceId()} with it. The token lives 15 minutes (the
+     * provisioning TTL); {@code req.tokenTtl()} is ignored here.
+     */
+    public static Result seedWebAuthn(JdbcTemplate jdbc, TransactionTemplate tx, Clock clock,
+                                      com.vitalsshield.server.admin.webauthn.RegistryAnchorKey anchorKey,
+                                      java.nio.file.Path keyFile, int adminPort, Request req) {
+        var origins = com.vitalsshield.server.admin.webauthn.WebAuthnOrigins.forAdminPort(adminPort, false);
+        String origin = "http://localhost:" + adminPort;
+        var audit = new com.vitalsshield.server.audit.AuditLog(jdbc, clock);
+        var passkeys = new com.vitalsshield.server.admin.webauthn.PasskeyRepository(jdbc);
+        var webauthn = new com.vitalsshield.server.admin.webauthn.WebAuthnService(passkeys, anchorKey, origins, tx,
+                audit, clock);
+        var good = com.vitalsshield.server.testsupport.SoftwareAuthenticator.Variant.good(origin);
+
+        var authenticator = java.nio.file.Files.exists(keyFile)
+                ? com.vitalsshield.server.testsupport.SoftwareAuthenticator.load(keyFile)
+                : com.vitalsshield.server.testsupport.SoftwareAuthenticator.create();
+        if (passkeys.find(authenticator.credentialIdB64url()).isEmpty()) {
+            String options = webauthn.registerBegin(CLINICIAN_ID, CREDENTIAL_ID);
+            webauthn.registerFinish(authenticator.register(options, good));
+            authenticator.save(keyFile);
+        }
+
+        var provisioning = new com.vitalsshield.server.admin.webauthn.ProvisioningService(jdbc, tx, webauthn, audit, clock);
+        var begun = provisioning.begin(CLINICIAN_ID, authenticator.credentialIdB64url(),
+                new com.vitalsshield.server.admin.webauthn.ProvisioningService.BeginRequest(req.deviceId(),
+                        HARDWARE_MODEL, req.patientId(), req.birthYear(), 30));
+        var done = provisioning.finish(CLINICIAN_ID, begun.ceremonyId(),
+                authenticator.assert_(begun.optionsJson(), good));
+        UUID tokenId = jdbc.queryForObject("SELECT token_id FROM device_bootstrap_tokens WHERE token_hash = ?",
+                UUID.class, sha256Hex(done.bootstrapToken()));
+        return new Result(done.bootstrapToken(), tokenId, done.assignmentId());
+    }
+
+    /** Bearer mode: fake WebAuthn fields (no re-verification in bearer mode). */
     public Result seed(Request req) {
         return tx.execute(status -> {
             Instant now = clock.instant();

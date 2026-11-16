@@ -11,9 +11,18 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 /** Free ephemeral ports, so integration tests never collide with a running bootRun on 8443-8445. */
 public final class TestPorts {
 
+    /**
+     * Phase 2 to 5 tests run in bearer mode, the Phase 5 behavior they assert (DECISIONS #64); Phase 6 tests and the
+     * e2e tier use {@link #registerWebAuthn} or {@link #asArgs(String)} with "webauthn".
+     */
     public record Listeners(int mtls, int pub, int admin, java.nio.file.Path adminCodeFile) {
         public List<String> asArgs() {
+            return asArgs("bearer");
+        }
+
+        public List<String> asArgs(String authMode) {
             return List.of(
+                    "--vitalsshield.admin.auth=" + authMode,
                     "--vitalsshield.admin.setup-code-file=" + adminCodeFile,
                     "--vitalsshield.listeners.bind-host=127.0.0.1",
                     "--vitalsshield.listeners.mtls-port=" + mtls,
@@ -55,9 +64,19 @@ public final class TestPorts {
         }
     }
 
-    /** For @SpringBootTest classes: registers three fresh ports. */
+    /** For @SpringBootTest classes: registers three fresh ports, bearer mode. */
     public static Listeners register(DynamicPropertyRegistry registry) {
+        return register(registry, "bearer");
+    }
+
+    /** As {@link #register(DynamicPropertyRegistry)}, in webauthn mode. */
+    public static Listeners registerWebAuthn(DynamicPropertyRegistry registry) {
+        return register(registry, "webauthn");
+    }
+
+    private static Listeners register(DynamicPropertyRegistry registry, String authMode) {
         Listeners l = allocate();
+        registry.add("vitalsshield.admin.auth", () -> authMode);
         registry.add("vitalsshield.admin.setup-code-file", () -> l.adminCodeFile().toString());
         registry.add("vitalsshield.listeners.bind-host", () -> "127.0.0.1");
         registry.add("vitalsshield.listeners.mtls-port", l::mtls);

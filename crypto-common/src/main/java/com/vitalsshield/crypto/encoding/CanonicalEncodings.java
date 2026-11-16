@@ -90,6 +90,35 @@ public final class CanonicalEncodings {
                 .toByteArray();
     }
 
+    /**
+     * Step-up approval for quarantine (DECISIONS #58): {@code SHA256(utf8WithLength("vitalsshield.quarantine.v1") ||
+     * utf8WithLength(device_id) || uint32_be(lookback_minutes) || utf8WithLength(reason) || raw(nonce16))}; the 32-byte
+     * digest is the WebAuthn challenge.
+     */
+    public static byte[] quarantineApprovalDigest(String deviceId, int lookbackMinutes, String reason, byte[] nonce16) {
+        byte[] preimage = new CanonicalBytes()
+                .utf8WithLength("vitalsshield.quarantine.v1")
+                .utf8WithLength(deviceId)
+                .uint32Be(lookbackMinutes)
+                .utf8WithLength(reason)
+                .raw(requireNonce(nonce16))
+                .toByteArray();
+        return new CanonicalBytes().sha256(preimage).toByteArray();
+    }
+
+    /**
+     * Step-up approval for restore-active (DECISIONS #58): {@code SHA256(utf8WithLength("vitalsshield.restore-active.v1")
+     * || utf8WithLength(device_id) || raw(nonce16))}.
+     */
+    public static byte[] restoreApprovalDigest(String deviceId, byte[] nonce16) {
+        byte[] preimage = new CanonicalBytes()
+                .utf8WithLength("vitalsshield.restore-active.v1")
+                .utf8WithLength(deviceId)
+                .raw(requireNonce(nonce16))
+                .toByteArray();
+        return new CanonicalBytes().sha256(preimage).toByteArray();
+    }
+
     private static byte[] requireNonce(byte[] nonce) {
         Objects.requireNonNull(nonce, "nonce");
         if (nonce.length != NONCE_LENGTH) {

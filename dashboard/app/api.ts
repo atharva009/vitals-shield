@@ -42,7 +42,19 @@ export type Quarantine = {
   batches_quarantined: number;
   baselines_reset: number;
   alerts_retracted: number;
+  approved_by?: string;
 };
+
+export type AuditEntry = {
+  sequence_id: number;
+  event_type: string;
+  actor_id: string;
+  payload: Record<string, unknown>;
+  entry_hash: string;
+  created_at: string;
+};
+
+export type Audit = { chain_valid: boolean; first_broken_sequence_id: number | null; total_entries: number; entries: AuditEntry[] };
 
 export type Overview = {
   server_time: string;
@@ -89,11 +101,21 @@ export const ALL_BOOT_STEPS = [
 
 export class Unauthorized extends Error {}
 
+/** Stored in place of a setup code in webauthn mode: the HttpOnly session cookie authenticates (DECISIONS #59). */
+export const SESSION = "__passkey_session__";
+
+export type AuthStatus = { mode: "webauthn" | "bearer"; passkeys_registered?: number; clinician_id?: string | null };
+
+export type Ceremony = { ceremony_id: string; options: Record<string, unknown> };
+
 export async function api<T>(code: string, path: string, init?: RequestInit): Promise<T> {
+  const auth: Record<string, string> = code === SESSION ? {} : { Authorization: `Bearer ${code}` };
+  const json: Record<string, string> = init?.body ? { "Content-Type": "application/json" } : {};
   const res = await fetch(path, {
     ...init,
     cache: "no-store",
-    headers: { ...(init?.headers ?? {}), Authorization: `Bearer ${code}` },
+    credentials: "same-origin",
+    headers: { ...json, ...(init?.headers ?? {}), ...auth },
   });
   if (res.status === 401) {
     throw new Unauthorized("unauthorized");

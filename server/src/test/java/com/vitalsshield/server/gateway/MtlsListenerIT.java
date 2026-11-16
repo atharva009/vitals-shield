@@ -140,10 +140,12 @@ class MtlsListenerIT {
     @Order(3)
     void allListenersOnLoopback() {
         List<InetSocketAddress> bound = server.bean(ListenerManager.class).boundAddresses();
-        assertThat(bound).hasSize(3);
-        assertThat(bound).allSatisfy(a -> assertThat(a.getAddress().getHostAddress()).isEqualTo("127.0.0.1"));
+        // Phase 6 (DECISIONS #55): the admin port is also bound on the IPv6 loopback, same port.
+        assertThat(bound).hasSize(4);
+        assertThat(bound).allSatisfy(a -> assertThat(a.getAddress().isLoopbackAddress()).isTrue());
+        assertThat(bound.subList(0, 3)).allSatisfy(a -> assertThat(a.getAddress().getHostAddress()).isEqualTo("127.0.0.1"));
         assertThat(bound).extracting(InetSocketAddress::getPort).containsExactly(
-                server.ports().mtls(), server.ports().pub(), server.ports().admin());
+                server.ports().mtls(), server.ports().pub(), server.ports().admin(), server.ports().admin());
     }
 
     // ---- handshake ----------------------------------------------------------------------------------------------

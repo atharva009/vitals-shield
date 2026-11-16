@@ -68,6 +68,25 @@ class CanonicalEncodingsTest {
                 "000000106465765f7765617261626c655f3031390000019a7e847000000102030405060708090a0b0c0d0e0f0000000000000003ae02e99bbdd3713ac87427589a48fc45818ef9a7ecd27941142d8f6f61afb7c1");
     }
 
+    @Test
+    void quarantineApprovalDigest() {
+        assertHex(CanonicalEncodings.quarantineApprovalDigest(DEVICE_ID, 10, "suspected clone", NONCE),
+                "410834cc75b0c5cbfd1b9496d6250ebb5083514c5a1c9f500c3a9cafdc76cc71");
+    }
+
+    @Test
+    void restoreApprovalDigest() {
+        assertHex(CanonicalEncodings.restoreApprovalDigest(DEVICE_ID, NONCE),
+                "7b06e2ab23e15d43f73c2650274e7480c0f8327121c8fdf53a4700e5dcc4b16e");
+    }
+
+    @Test
+    void approvalDigestsRejectNonceNot16Bytes() {
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                () -> CanonicalEncodings.restoreApprovalDigest(DEVICE_ID, new byte[15]))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
     @ParameterizedTest
     @ValueSource(ints = {0, 15, 17, 32})
     void olkRenewalRejectsNonceNot16Bytes(int length) {

@@ -1,5 +1,7 @@
 package com.vitalsshield.server.enrollment;
 
+import com.vitalsshield.server.admin.AdminProperties;
+import com.vitalsshield.server.admin.webauthn.ProvisioningAssertionVerifier;
 import com.vitalsshield.crypto.CsrFactory;
 import com.vitalsshield.crypto.DerSignatures;
 import com.vitalsshield.crypto.EcKeys;
@@ -84,11 +86,16 @@ public class EnrollmentService {
     private final IssuedSerialLedger ledger;
     private final CaIssuerRepository issuers;
     private final EnrollmentHooks hooks;
+    private final AdminProperties admin;
+    private final ProvisioningAssertionVerifier approvals;
 
     public EnrollmentService(JdbcTemplate jdbc, TransactionTemplate tx, KmsSigner kmsSigner, ActiveKmsKeys kmsKeys,
                              CertificateIssuer issuer, CertificateDenyList denyList, ActiveSessionRegistry sessions,
                              CrlService crls, PkiProperties pki, Clock clock, IssuedSerialLedger ledger,
-                             CaIssuerRepository issuers, ObjectProvider<EnrollmentHooks> hooks) {
+                             CaIssuerRepository issuers, ObjectProvider<EnrollmentHooks> hooks,
+                             AdminProperties admin, ProvisioningAssertionVerifier approvals) {
+        this.admin = admin;
+        this.approvals = approvals;
         this.jdbc = jdbc;
         this.tx = tx;
         this.kmsSigner = kmsSigner;
@@ -116,7 +123,7 @@ public class EnrollmentService {
     }
 
     record Claim(UUID tokenId, String assignmentId, Instant assignmentActiveFrom, CertKey reserved,
-                 BigInteger serial) {
+                 BigInteger serial, ProvisioningAssertionVerifier.StoredApproval approval) {
     }
 
     /** Activation found the token or the reserved serial taken by someone else. */
@@ -133,6 +140,22 @@ public class EnrollmentService {
             return early;
         }
         Claim claim = (Claim) claimed;
+
+        // ---- Out of transaction: the clinician's provisioning approval (DECISIONS #57), before any KMS call ------
+        if (admin.webauthn()) {
+            java.util.Optional<String> problem = approvals.verify(req.deviceId(), req.bootstrapToken(), claim.approval());
+            if (problem.isPresent()) {
+                log.warn("Provisioning approval for {} does not verify; token burned: {}", req.deviceId(),
+                        problem.get());
+                tx.executeWithoutResult(s -> {
+                    setTokenStatusInTx(claim.tokenId(), "REVOKED");
+                    ledger.voidSerial(claim.reserved(), req.deviceId(), clock.instant());
+                });
+                // No CRL republication here: the voided serial was never signed, so this path makes no KMS Sign
+                // call at all; the serial joins the CRL at the next republication.
+                return EnrollmentResult.error(403, "PROVISIONING_UNVERIFIED");
+            }
+        }
 
         // ---- Out of transaction: proofs ---------------------------------------------------------------------------
         SubjectPublicKeyInfo olkSpki;
@@ -233,7 +256,9 @@ public class EnrollmentService {
     /** Returns a Claim, or an EnrollmentResult to return immediately. Runs inside Tx 1. */
     private Object claim(EnrollRequest req) {
         List<Map<String, Object>> tokens = jdbc.queryForList("""
-                SELECT token_id, status::text AS status FROM device_bootstrap_tokens
+                SELECT token_id, status::text AS status, webauthn_cred_id_b64, webauthn_auth_data,
+                       webauthn_client_json, webauthn_signature, expires_at
+                  FROM device_bootstrap_tokens
                  WHERE device_id = ? AND token_hash = ? AND expires_at > NOW()
                    AND (status = 'ISSUED' OR (status = 'CLAIMING' AND claimed_at < NOW() - INTERVAL '2 minutes'))
                  FOR UPDATE
@@ -242,6 +267,11 @@ public class EnrollmentService {
             return EnrollmentResult.error(401, "INVALID_BOOTSTRAP");
         }
         UUID tokenId = (UUID) tokens.get(0).get("token_id");
+        Map<String, Object> t = tokens.get(0);
+        ProvisioningAssertionVerifier.StoredApproval approval = new ProvisioningAssertionVerifier.StoredApproval(
+                (String) t.get("webauthn_cred_id_b64"), (String) t.get("webauthn_auth_data"),
+                (String) t.get("webauthn_client_json"), (String) t.get("webauthn_signature"),
+                ((Timestamp) t.get("expires_at")).toInstant());
         if ("CLAIMING".equals(tokens.get(0).get("status"))) {
             // Stale reclaim: whatever the previous claimant reserved more than 2 minutes ago is void (DECISIONS #38).
             for (CertKey voided : ledger.sweepStale()) {
@@ -270,7 +300,7 @@ public class EnrollmentService {
         BigInteger serial = ledger.reserve(issuerKeyHash, req.deviceId());
         return new Claim(tokenId, (String) assignment.get(0).get("id"),
                 ((Timestamp) assignment.get(0).get("active_from")).toInstant(),
-                CertKey.of(issuerKeyHash, SerialNumbers.toHex(serial)), serial);
+                CertKey.of(issuerKeyHash, SerialNumbers.toHex(serial)), serial, approval);
     }
 
     private EnrollmentResult activate(EnrollRequest req, Claim claim, X509Certificate cert, String dekAnchorSig,

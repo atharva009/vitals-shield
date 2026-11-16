@@ -78,6 +78,22 @@ def re_enroll_proof_bytes() -> bytes:
     return utf8_len(DEVICE_ID) + i64(EPOCH_MS) + NONCE + i64(BOOT_EPOCH) + sha256(OLK_CSR_DER)
 
 
+LOOKBACK_MINUTES = 10
+REASON = "suspected clone"
+
+
+def quarantine_approval_digest() -> bytes:
+    # SHA256(utf8WithLength("vitalsshield.quarantine.v1") || utf8WithLength(device_id) || uint32_be(lookback_minutes)
+    #   || utf8WithLength(reason) || raw(nonce16))
+    return sha256(utf8_len("vitalsshield.quarantine.v1") + utf8_len(DEVICE_ID) + u32(LOOKBACK_MINUTES)
+                  + utf8_len(REASON) + NONCE)
+
+
+def restore_approval_digest() -> bytes:
+    # SHA256(utf8WithLength("vitalsshield.restore-active.v1") || utf8WithLength(device_id) || raw(nonce16))
+    return sha256(utf8_len("vitalsshield.restore-active.v1") + utf8_len(DEVICE_ID) + NONCE)
+
+
 VECTORS = [
     ("passkeyAnchorBytes", passkey_anchor_bytes),
     ("provisioningDigest", provisioning_digest),
@@ -85,6 +101,8 @@ VECTORS = [
     ("dekAnchorBytes", dek_anchor_bytes),
     ("olkRenewalProofBytes", olk_renewal_proof_bytes),
     ("reEnrollProofBytes", re_enroll_proof_bytes),
+    ("quarantineApprovalDigest", quarantine_approval_digest),
+    ("restoreApprovalDigest", restore_approval_digest),
 ]
 
 if __name__ == "__main__":

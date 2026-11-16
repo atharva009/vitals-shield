@@ -3,15 +3,15 @@ package com.vitalsshield.server.e2e;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.vitalsshield.server.pki.TrustAnchors;
-import com.vitalsshield.server.pki.trust.CertKey;
-import com.vitalsshield.server.signer.SignerRevocationService;
 import com.vitalsshield.server.testsupport.MtlsTestClient;
+import com.vitalsshield.server.testsupport.AdminHttp;
+import com.vitalsshield.server.testsupport.SoftwareAuthenticator;
 import com.vitalsshield.server.testsupport.SpineFixture;
+import com.vitalsshield.server.testsupport.WebAuthnSteps;
 import com.vitalsshield.server.testsupport.TestPorts;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.UUID;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -48,28 +48,35 @@ class TelemetryPerRequest403E2E {
         trustFile = dir.resolve("root-ca.pem");
         stateRoot = dir.resolve("sim");
         registry.add("vitalsshield.pki.trust-file", trustFile::toString);
-        ports = TestPorts.register(registry);
+        ports = TestPorts.registerWebAuthn(registry);
     }
 
     @Autowired JdbcTemplate jdbc;
     @Autowired TransactionTemplate tx;
     @Autowired TrustAnchors anchors;
-    @Autowired SignerRevocationService revocations;
 
     @Test
     void ingestOnSameConnectionAfterRevokeIs403() throws Exception {
         SpineFixture fx = new SpineFixture(jdbc, tx, ports, trustFile, stateRoot);
-        SpineFixture.Device d = fx.enroll("dev_e2e_403");
+        AdminHttp admin = new AdminHttp(ports.admin());
+        SoftwareAuthenticator clinician = SoftwareAuthenticator.create();
+        WebAuthnSteps.bootstrapClinician(admin, clinician, "dr_403", ports.adminCodeFile());
+        SpineFixture.Device d = fx.enrollWithToken("dev_e2e_403",
+                WebAuthnSteps.provision(admin, clinician, "dev_e2e_403"));
         try (MtlsTestClient.Connection c = fx.connect(d, anchors.root())) {
             assertThat(SpineFixture.ingest(c, SpineFixture.frame(d, 1, UUID.randomUUID())).status()).isEqualTo(200);
 
-            revocations.revoke(CertKey.from(d.cert()), "KEY_COMPROMISE").block(Duration.ofSeconds(10));
+            // Step-up quarantine; eviction is off, so the connection stays open and the next request is refused
+            // by the per-request status check.
+            AdminHttp.Response q = WebAuthnSteps.quarantine(admin, clinician, "dev_e2e_403", 1, "per-request 403");
+            assertThat(q.status()).as(q.body()).isEqualTo(200);
+            assertThat(q.json()).containsEntry("approved_by", "dr_403").containsEntry("channels_closed", 0);
 
             MtlsTestClient.Response r = SpineFixture.ingest(c, SpineFixture.frame(d, 2, UUID.randomUUID()));
             assertThat(r.status()).isEqualTo(403);
             assertThat(r.body()).contains("CERT_NOT_ACCEPTED");
         }
         assertThat(jdbc.queryForObject("SELECT count(*) FROM telemetry_records WHERE device_id = 'dev_e2e_403'",
-                Integer.class)).isEqualTo(1);
+                Integer.class)).as("only the first batch is stored (now quarantined)").isEqualTo(1);
     }
 }

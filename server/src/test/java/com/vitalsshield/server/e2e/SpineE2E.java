@@ -2,13 +2,15 @@ package com.vitalsshield.server.e2e;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.nimbusds.jose.util.JSONObjectUtils;
 import com.vitalsshield.crypto.TelemetryJws;
 import com.vitalsshield.server.pki.Pems;
 import com.vitalsshield.server.pki.TrustAnchors;
 import com.vitalsshield.server.testsupport.LedgerInvariant;
 import com.vitalsshield.server.testsupport.MtlsTestClient;
+import com.vitalsshield.server.testsupport.AdminHttp;
+import com.vitalsshield.server.testsupport.SoftwareAuthenticator;
 import com.vitalsshield.server.testsupport.SpineFixture;
+import com.vitalsshield.server.testsupport.WebAuthnSteps;
 import com.vitalsshield.server.testsupport.TestPorts;
 import com.vitalsshield.simulator.GatewayClient;
 import java.io.ByteArrayInputStream;
@@ -16,9 +18,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -45,7 +44,10 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
-/** The thin spine end to end, 5 times: seed, enroll, stream, verify at rest, quarantine, evict, refuse, CRL. */
+/**
+ * The thin spine end to end, 5 times, in webauthn mode: a clinician (software passkey) provisions, the device enrolls
+ * (Protocol A re-verifies the approval), streams, is verified at rest, then a step-up quarantine evicts, refuses, CRL.
+ */
 @Tag("e2e")
 @Testcontainers
 @ActiveProfiles("local")
@@ -67,7 +69,7 @@ class SpineE2E {
         trustFile = dir.resolve("root-ca.pem");
         stateRoot = dir.resolve("sim");
         registry.add("vitalsshield.pki.trust-file", trustFile::toString);
-        ports = TestPorts.register(registry);
+        ports = TestPorts.registerWebAuthn(registry);
     }
 
     @Autowired JdbcTemplate jdbc;
@@ -75,9 +77,13 @@ class SpineE2E {
     @Autowired TrustAnchors anchors;
 
     final List<Long> latencies = new ArrayList<>();
+    final SoftwareAuthenticator clinician = SoftwareAuthenticator.create();
+    AdminHttp admin;
 
     @Test
     void spineFiveTimes() throws Exception {
+        admin = new AdminHttp(ports.admin());
+        WebAuthnSteps.bootstrapClinician(admin, clinician, "dr_spine", ports.adminCodeFile());
         for (int run = 1; run <= 5; run++) {
             latencies.add(spine("dev_spine_" + run));
         }
@@ -92,7 +98,7 @@ class SpineE2E {
 
     private long spine(String dev) throws Exception {
         SpineFixture fx = new SpineFixture(jdbc, tx, ports, trustFile, stateRoot);
-        SpineFixture.Device d = fx.enroll(dev);
+        SpineFixture.Device d = fx.enrollWithToken(dev, WebAuthnSteps.provision(admin, clinician, dev));
 
         // 1. Stream 20 batches with the in-process simulator.
         ByteArrayOutputStream log = new ByteArrayOutputStream();
@@ -116,9 +122,10 @@ class SpineE2E {
         long latency;
         try (MtlsTestClient.Connection live = fx.connect(d, anchors.root())) {
             assertThat(live.get("/api/v1/telemetry/ping").status()).isEqualTo(200);
-            HttpResponse<String> q = quarantine(dev);
-            assertThat(q.statusCode()).as(q.body()).isEqualTo(200);
-            Map<String, Object> qr = JSONObjectUtils.parse(q.body());
+            AdminHttp.Response q = WebAuthnSteps.quarantine(admin, clinician, dev, 60, "spine e2e");
+            assertThat(q.status()).as(q.body()).isEqualTo(200);
+            Map<String, Object> qr = q.json();
+            assertThat(qr).containsEntry("approved_by", "dr_spine");
             latency = ((Number) qr.get("revocation_latency_micros")).longValue();
             assertThat(((Number) qr.get("channels_closed")).intValue()).isGreaterThanOrEqualTo(1);
 
@@ -147,15 +154,6 @@ class SpineE2E {
     private int count(String dev, String trustState) {
         return jdbc.queryForObject("SELECT count(*) FROM telemetry_records WHERE device_id = ? AND trust_state = ?::telemetry_trust_state",
                 Integer.class, dev, trustState);
-    }
-
-    private HttpResponse<String> quarantine(String dev) throws Exception {
-        return HttpClient.newHttpClient().send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + ports.admin()
-                        + "/api/v1/admin/devices/" + dev + "/quarantine"))
-                .header("Authorization", "Bearer " + Files.readString(ports.adminCodeFile()).trim())
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString("{\"lookback_minutes\":60,\"reason\":\"spine e2e\"}")).build(),
-                HttpResponse.BodyHandlers.ofString());
     }
 
     private boolean onPublishedCrl(X509Certificate cert) throws Exception {

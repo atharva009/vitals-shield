@@ -87,6 +87,18 @@ public class ListenerManager implements DisposableBean {
                 .port(props.adminPort())
                 .handle(adapter)
                 .bindNow());
+        // Same port on the IPv6 loopback (DECISIONS #55): "localhost" may resolve to ::1 first.
+        int adminPort = ((InetSocketAddress) servers.get("admin").address()).getPort();
+        try {
+            servers.put("admin-ipv6", HttpServer.create()
+                    .protocol(HttpProtocol.HTTP11)
+                    .host(ListenerProperties.ADMIN_BIND_HOST_IPV6)
+                    .port(adminPort)
+                    .handle(adapter)
+                    .bindNow());
+        } catch (RuntimeException e) {
+            log.warn("Admin listener not bound on [::1]:{} ({}); IPv4 loopback only", adminPort, e.toString());
+        }
         servers.forEach((name, s) -> log.info("Listener {} bound on {}", name, s.address()));
     }
 
