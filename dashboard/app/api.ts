@@ -20,10 +20,44 @@ export type Device = {
   dev_seed: boolean;
   dek_anchor_verified: boolean | null;
   assignment: Assignment | null;
-  active_cert: { serial_display: string; not_before: string; not_after: string; status: string; thumbprint_s256: string } | null;
+  active_cert: {
+    serial_display: string;
+    not_before: string;
+    not_after: string;
+    status: string;
+    thumbprint_s256: string;
+    /** DECISIONS #83: not_before + 2/3 of the validity. */
+    renewal_due_at: string;
+  } | null;
+  /** Protocol B: renewed, waiting for its first accepted batch. */
+  pending_cert: LifecycleCert | null;
+  /** Protocol B: superseded, accepted until grace_expires_at. */
+  renewed_cert: LifecycleCert | null;
   live_sockets: number;
   /** DECISIONS #77: certificate revoked but the quarantine transaction did not commit. */
   needs_attention: "CERT_REVOKED_STATE_ACTIVE" | null;
+};
+
+export type LifecycleCert = {
+  serial_display: string;
+  issued_at: string;
+  not_after: string;
+  grace_expires_at: string | null;
+  grace_ended?: boolean;
+};
+
+/** One Protocol B renewal (GET /api/v1/admin/overview renewals[], newest first). */
+export type Renewal = {
+  device_id: string;
+  old_serial_display: string | null;
+  new_serial_display: string;
+  new_status: string;
+  new_revocation_reason: string | null;
+  issued_at: string;
+  activated_at: string | null;
+  grace_expires_at: string | null;
+  grace_ended_at: string | null;
+  grace_sockets_closed: number | null;
 };
 
 export type Baseline = {
@@ -113,6 +147,7 @@ export type Overview = {
   revocations: Revocation[];
   quarantines: Quarantine[];
   devices: Device[];
+  renewals: Renewal[];
   alerts: { active: number; acknowledged: number; retracted_by_quarantine: number; resolved: number };
   clinical: {
     evaluations: number;
@@ -120,7 +155,10 @@ export type Overview = {
     dedupe_suppressed: number;
     alerts_created: Record<string, number>;
     calibration_size: number;
-    unevaluated: number;
+    /** DECISIONS #79: queue overflow and evaluations lost to a restart. */
+    unevaluated_count: number;
+    queue_overflows: number;
+    queue_capacity: number;
   };
 };
 

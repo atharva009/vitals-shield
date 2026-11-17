@@ -107,3 +107,4 @@
 .baseline { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 12px 0; padding: 12px 14px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--border); }
 .baseline div > div:last-child { font-variant-numeric: tabular-nums; }
 .unevaluated { font-size: 11px; font-weight: 700; color: var(--warn); margin-left: 4px; }
+.code { word-break: normal; overflow-wrap: anywhere; white-space: nowrap; }

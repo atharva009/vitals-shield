@@ -36,6 +36,19 @@ function countdown(iso: string | undefined, nowMs: number): string {
   return h > 0 ? `${h} h ${m} min left` : `${m} min left`;
 }
 
+/** "1 min 40 s", "40 s", or the fallback once the instant has passed. */
+function secondsLeft(iso: string | null | undefined, nowMs: number, passed: string): string {
+  const t = ms(iso);
+  if (t === null) return "";
+  const sec = Math.ceil((t - nowMs) / 1000);
+  if (sec <= 0) return passed;
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const r = sec % 60;
+  if (h > 0) return `${h} h ${m} min`;
+  return m > 0 ? `${m} min ${r} s` : `${r} s`;
+}
+
 function latency(micros: number | undefined): { big: string; small: string } {
   if (micros === undefined) return { big: "n/a", small: "" };
   return { big: `${(micros / 1000).toFixed(1)} ms`, small: `${micros.toLocaleString()} µs` };
@@ -401,10 +414,20 @@ export default function Page() {
           <Flash value={lastRev?.latency_micros} className={s.tileValue}>{lat.big}</Flash>
           <div className={s.tileSub}>{lat.small}</div>
         </div>
-        <div className={`${s.tile} ${o && o.alerts.active > 0 ? s.tileDanger : ""}`} title={o ? `acknowledged ${o.alerts.acknowledged} · resolved ${o.alerts.resolved} · dedupe suppressed ${o.clinical.dedupe_suppressed} · unevaluated batches ${o.clinical.unevaluated}` : ""}>
+        <div className={`${s.tile} ${o && o.alerts.active > 0 ? s.tileDanger : ""}`} title={o ? `acknowledged ${o.alerts.acknowledged} · resolved ${o.alerts.resolved} · dedupe suppressed ${o.clinical.dedupe_suppressed} · unevaluated batches ${o.clinical.unevaluated_count}` : ""}>
           <div className={s.tileLabel}>Active alerts</div>
           <Flash value={o?.alerts.active} className={s.tileValue}>{o?.alerts.active ?? "…"}</Flash>
           <div className={s.tileSub}>{o ? `${o.alerts.acknowledged} acknowledged` : ""}</div>
+        </div>
+        <div
+          className={`${s.tile} ${o && o.clinical.queue_overflows > 0 ? s.tileDanger : ""}`}
+          title="DECISIONS #79: batches whose evaluation overflowed the queue or was lost to a restart stay unevaluated and are never replayed"
+        >
+          <div className={s.tileLabel}>Clinical engine</div>
+          <Flash value={o?.clinical.unevaluated_count} className={s.tileValue}>{o?.clinical.unevaluated_count ?? "…"}</Flash>
+          <div className={s.tileSub}>
+            {o ? `unevaluated · ${o.clinical.queue_overflows} queue overflows (cap ${o.clinical.queue_capacity}) · ${o.clinical.evaluations} evaluated` : ""}
+          </div>
         </div>
         <div className={s.tile}>
           <div className={s.tileLabel}>Retracted alerts</div>
@@ -566,12 +589,65 @@ export default function Page() {
               Quarantine
             </button>
           </div>
+          <div className={s.certGrid} data-testid="cert-card">
+            <div>
+              <div className={s.muted}>Current certificate</div>
+              {device.active_cert && device.active_cert.status === "ACTIVE" ? (
+                <Flash value={device.active_cert.serial_display}>
+                  <div className={s.mono} data-testid="cert-active">{device.active_cert.serial_display}</div>
+                </Flash>
+              ) : (
+                <div className={s.muted}>none ACTIVE</div>
+              )}
+            </div>
+            <div>
+              <div className={s.muted}>Next renewal due</div>
+              <div data-testid="cert-renewal-due">
+                {device.active_cert && device.active_cert.status === "ACTIVE"
+                  ? `${time(device.active_cert.renewal_due_at)} (${secondsLeft(device.active_cert.renewal_due_at, serverNow, "due now")})`
+                  : "–"}
+              </div>
+            </div>
+            <div>
+              <div className={s.muted}>Pending</div>
+              {device.pending_cert ? (
+                <div data-testid="cert-pending">
+                  <span className={s.mono}>{short(device.pending_cert.serial_display, 20)}</span>{" "}
+                  <span className={`${s.chip} ${s.chipWarn}`}>awaiting first batch</span>
+                </div>
+              ) : (
+                <div className={s.muted}>none</div>
+              )}
+            </div>
+            <div>
+              <div className={s.muted}>Renewed (previous)</div>
+              {device.renewed_cert ? (
+                <div data-testid="cert-renewed">
+                  <span className={s.mono}>{short(device.renewed_cert.serial_display, 20)}</span>{" "}
+                  {device.renewed_cert.grace_expires_at && ms(device.renewed_cert.grace_expires_at)! > serverNow ? (
+                    <span className={`${s.chip} ${s.chipWarn}`}>
+                      grace {secondsLeft(device.renewed_cert.grace_expires_at, serverNow, "0 s")}
+                    </span>
+                  ) : (
+                    <span className={`${s.chip} ${s.chipMuted}`}>superseded</span>
+                  )}
+                </div>
+              ) : (
+                <div className={s.muted}>none</div>
+              )}
+            </div>
+          </div>
           {device.active_cert && (
             <div className={s.certGrid}>
-              <div>
-                <div className={s.muted}>Serial</div>
-                <div className={s.mono}>{device.active_cert.serial_display}</div>
-              </div>
+              {device.active_cert.status !== "ACTIVE" && (
+                <div>
+                  <div className={s.muted}>Last certificate</div>
+                  <div>
+                    <span className={s.mono}>{short(device.active_cert.serial_display, 20)}</span>{" "}
+                    <span className={`${s.chip} ${stateClass(device.active_cert.status)}`}>{device.active_cert.status}</span>
+                  </div>
+                </div>
+              )}
               <div>
                 <div className={s.muted}>x5t#S256</div>
                 <div className={s.mono}>{device.active_cert.thumbprint_s256}</div>
@@ -733,6 +809,54 @@ export default function Page() {
               <tr>
                 <td colSpan={6} className={s.muted}>
                   No revocations since boot.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </section>
+
+      <section className={s.panel}>
+        <h2>Renewal log</h2>
+        <table className={s.table} data-testid="renewal-log">
+          <thead>
+            <tr>
+              <th>Device</th>
+              <th>Old serial</th>
+              <th>New serial</th>
+              <th>Issued</th>
+              <th>Activated</th>
+              <th>Grace ended</th>
+            </tr>
+          </thead>
+          <tbody>
+            {o?.renewals.map((r) => (
+              <tr key={r.new_serial_display}>
+                <td>{r.device_id}</td>
+                <td className={s.mono} title={r.old_serial_display ?? ""}>{short(r.old_serial_display ?? "–", 16)}</td>
+                <td className={s.mono} title={r.new_serial_display}>
+                  {short(r.new_serial_display, 16)}
+                  {r.new_status === "REVOKED" && (
+                    <span className={`${s.chip} ${s.chipDanger}`} title={r.new_revocation_reason ?? ""}>
+                      {r.new_revocation_reason === "REPLACED_BEFORE_USE" ? "replaced before use" : "revoked"}
+                    </span>
+                  )}
+                </td>
+                <td>{time(r.issued_at)}</td>
+                <td>{r.activated_at ? time(r.activated_at) : r.new_status === "ISSUED_PENDING_USE" ? "awaiting first batch" : "–"}</td>
+                <td>
+                  {r.grace_ended_at
+                    ? `${time(r.grace_ended_at)}${r.grace_sockets_closed !== null ? ` · ${r.grace_sockets_closed} socket(s) closed` : ""}`
+                    : r.grace_expires_at
+                      ? `in ${secondsLeft(r.grace_expires_at, serverNow, "0 s")}`
+                      : "–"}
+                </td>
+              </tr>
+            ))}
+            {o && o.renewals.length === 0 && (
+              <tr>
+                <td colSpan={6} className={s.muted}>
+                  No renewals yet.
                 </td>
               </tr>
             )}

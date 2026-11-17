@@ -16,6 +16,7 @@ import com.vitalsshield.server.signer.SignerRevocationService;
 import com.vitalsshield.server.telemetry.TelemetryMetrics;
 import java.security.cert.X509Certificate;
 import java.sql.Timestamp;
+import com.vitalsshield.server.renewal.CertificateActivationService;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -54,14 +55,17 @@ public class AdminOverviewService {
     private final DekAnchorVerifier anchors;
     private final Clock clock;
     private final ClinicalProperties clinical;
+    private final CertificateActivationService activation;
     private final Map<String, CachedVerdict> dekCache = new ConcurrentHashMap<>();
 
     public AdminOverviewService(JdbcTemplate jdbc, BootStatusTracker boot, KmsHealthMonitor kms,
                                 CaIssuerRepository issuers, CrlService crls, ActiveSessionRegistry sessions,
                                 CertificateDenyList denyList, TelemetryMetrics telemetry, IssuedSerialLedger ledger,
                                 SignerRevocationService revocations, QuarantineService quarantines,
-                                DekAnchorVerifier anchors, Clock clock, ClinicalProperties clinical) {
+                                DekAnchorVerifier anchors, Clock clock, ClinicalProperties clinical,
+                                CertificateActivationService activation) {
         this.clinical = clinical;
+        this.activation = activation;
         this.jdbc = jdbc;
         this.boot = boot;
         this.kms = kms;
@@ -108,6 +112,7 @@ public class AdminOverviewService {
         out.put("quarantines", quarantines.recentResults().stream().limit(20).map(QuarantineService.Result::toJson)
                 .toList());
         out.put("devices", devices(byDevice));
+        out.put("renewals", renewals(20));
         out.put("alerts", alertCounts());
         out.put("clinical", clinicalCounters());
         return out;
@@ -167,7 +172,10 @@ public class AdminOverviewService {
         });
         m.put("alerts_created", byType);
         m.put("calibration_size", clinical.calibrationSize());
-        m.put("unevaluated", jdbc.queryForObject("""
+        // DECISIONS #79: queue overflow and evaluations lost to a restart both show up as unevaluated rows.
+        m.put("queue_overflows", snap.getOrDefault("clinical.queue_overflows", 0L));
+        m.put("queue_capacity", clinical.queueCapacity());
+        m.put("unevaluated_count", jdbc.queryForObject("""
                 SELECT count(*) FROM telemetry_records
                  WHERE clinical_evaluated_at IS NULL AND trust_state IN ('ACCEPTED', 'SIGNAL_DEGRADED')
                 """, Long.class));
@@ -375,16 +383,86 @@ public class AdminOverviewService {
                 c.put("not_after", rs.getTimestamp("not_after").toInstant().toString());
                 c.put("status", rs.getString("cert_status"));
                 c.put("thumbprint_s256", rs.getString("cert_thumbprint_s256"));
+                c.put("renewal_due_at", renewalDueAt(rs.getTimestamp("not_before").toInstant(),
+                        rs.getTimestamp("not_after").toInstant()).toString());
                 m.put("active_cert", c);
             } else {
                 m.put("active_cert", null);
             }
+            m.put("pending_cert", lifecycleCert(id, "ISSUED_PENDING_USE"));
+            m.put("renewed_cert", lifecycleCert(id, "RENEWED"));
             m.put("live_sockets", liveByDevice.getOrDefault(id, 0));
             // DECISIONS #77: the certificate was revoked but the quarantine transaction did not commit.
             m.put("needs_attention", rs.getBoolean("cert_revoked_active") ? "CERT_REVOKED_STATE_ACTIVE" : null);
             out.add(m);
         });
         return out;
+    }
+
+    /** DECISIONS #83: renewal is due at not_before + 2/3 of the validity period. */
+    public static Instant renewalDueAt(Instant notBefore, Instant notAfter) {
+        return notBefore.plusMillis(Duration.between(notBefore, notAfter).toMillis() * 2 / 3);
+    }
+
+    /** The device's ISSUED_PENDING_USE or newest RENEWED certificate, or null. */
+    private Map<String, Object> lifecycleCert(String deviceId, String status) {
+        List<Map<String, Object>> rows = jdbc.query("""
+                SELECT serial_number, issuer_key_hash, issued_at, not_before, not_after, grace_expires_at
+                  FROM certificates WHERE device_id = ? AND status = ?::cert_status
+                 ORDER BY not_before DESC LIMIT 1
+                """, (rs, i) -> {
+            Map<String, Object> c = new LinkedHashMap<>();
+            c.put("serial_display", SerialDisplayFormat.toOpenSslHex(rs.getString("serial_number")));
+            c.put("issued_at", rs.getTimestamp("issued_at").toInstant().toString());
+            c.put("not_after", rs.getTimestamp("not_after").toInstant().toString());
+            Timestamp grace = rs.getTimestamp("grace_expires_at");
+            c.put("grace_expires_at", grace == null ? null : grace.toInstant().toString());
+            if (grace != null) {
+                c.put("grace_ended", !clock.instant().isBefore(grace.toInstant()));
+            }
+            return c;
+        }, deviceId, status);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    /**
+     * Newest first: certificates issued by Protocol B (superseded_serial set) with their predecessor. grace_ended_at is
+     * the old certificate's grace_expires_at once it has passed; sockets_closed is what the scheduled eviction closed
+     * in this process (null if it has not run here).
+     */
+    public List<Map<String, Object>> renewals(int limit) {
+        return jdbc.query("""
+                SELECT n.device_id, n.serial_number AS new_serial, n.issuer_key_hash AS new_issuer, n.issued_at,
+                       n.activated_at, n.status::text AS new_status, n.revocation_reason AS new_reason,
+                       o.serial_number AS old_serial, o.issuer_key_hash AS old_issuer, o.grace_expires_at,
+                       o.status::text AS old_status
+                  FROM certificates n
+                  LEFT JOIN certificates o ON o.device_id = n.device_id AND o.serial_number = n.superseded_serial
+                 WHERE n.superseded_serial IS NOT NULL
+                 ORDER BY n.issued_at DESC LIMIT ?
+                """, (rs, i) -> {
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("device_id", rs.getString("device_id"));
+            String oldSerial = rs.getString("old_serial");
+            r.put("old_serial_display", oldSerial == null ? null : SerialDisplayFormat.toOpenSslHex(oldSerial));
+            r.put("new_serial_display", SerialDisplayFormat.toOpenSslHex(rs.getString("new_serial")));
+            r.put("new_status", rs.getString("new_status"));
+            r.put("new_revocation_reason", rs.getString("new_reason"));
+            r.put("issued_at", rs.getTimestamp("issued_at").toInstant().toString());
+            Timestamp act = rs.getTimestamp("activated_at");
+            r.put("activated_at", act == null ? null : act.toInstant().toString());
+            Timestamp grace = act == null ? null : rs.getTimestamp("grace_expires_at");
+            r.put("grace_expires_at", grace == null ? null : grace.toInstant().toString());
+            r.put("grace_ended_at", grace != null && !clock.instant().isBefore(grace.toInstant())
+                    ? grace.toInstant().toString() : null);
+            Integer closed = null;
+            if (oldSerial != null) {
+                closed = activation.graceEviction(CertKey.of(rs.getString("old_issuer"), oldSerial))
+                        .map(CertificateActivationService.GraceEviction::socketsClosed).orElse(null);
+            }
+            r.put("grace_sockets_closed", closed);
+            return r;
+        }, limit);
     }
 
     /** Local signature check, cached per device for 30 s (the Key #4 public key is cached by the verifier). */

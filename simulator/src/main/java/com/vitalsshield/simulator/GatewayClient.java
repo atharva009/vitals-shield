@@ -23,7 +23,7 @@ import javax.net.ssl.TrustManagerFactory;
  * launch (never pinned in code). Hostname verification stays on; the default URLs use 127.0.0.1, which the gateway
  * leaf carries as an IP SAN (DECISIONS #36).
  */
-public final class GatewayClient {
+public final class GatewayClient implements AutoCloseable {
 
     public record Response(int status, String body, java.net.http.HttpHeaders headers) {
     }
@@ -65,6 +65,12 @@ public final class GatewayClient {
                         .POST(HttpRequest.BodyPublishers.ofString(compactJws, StandardCharsets.US_ASCII)).build(),
                 HttpResponse.BodyHandlers.ofString());
         return new Response(r.statusCode(), r.body(), r.headers());
+    }
+
+    /** Drops this client's pooled connections (the next client handshakes with its own certificate). */
+    @Override
+    public void close() {
+        http.shutdownNow();
     }
 
     /** True if {@code e} (or a cause) is a TLS-level refusal: a handshake failure or a fatal alert from the server. */

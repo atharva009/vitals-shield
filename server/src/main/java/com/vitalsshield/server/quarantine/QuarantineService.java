@@ -1,9 +1,9 @@
 package com.vitalsshield.server.quarantine;
 
-// LOCK ORDER (DECISIONS #70), in every transaction: devices -> telemetry_records -> patient_device_assignments
-// -> clinical_alerts -> audit advisory lock LAST. This class: devices FOR UPDATE first, then (one statement) the
+// LOCK ORDER (DECISIONS #82, extends #70), in every transaction: devices -> certificates -> telemetry_records
+// -> patient_device_assignments -> clinical_alerts -> audit advisory lock LAST. This class: devices FOR UPDATE first, then (one statement) the
 // sanitize CTE updates telemetry_records, patient_device_assignments and clinical_alerts in that order, then the
-// audit append.
+// audit append. Certificates are revoked afterwards in SignerRevocationService's own transaction.
 
 import com.vitalsshield.server.audit.AuditLog;
 import org.springframework.beans.factory.ObjectProvider;

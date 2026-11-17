@@ -1,7 +1,7 @@
 package com.vitalsshield.server.enrollment;
 
-// LOCK ORDER (DECISIONS #70), in every transaction: devices -> telemetry_records -> patient_device_assignments
-// -> clinical_alerts -> audit advisory lock LAST. This class: devices FOR UPDATE (activation) and plain reads of the
+// LOCK ORDER (DECISIONS #82, extends #70), in every transaction: devices -> certificates -> telemetry_records
+// -> patient_device_assignments -> clinical_alerts -> audit advisory lock LAST. This class: devices FOR UPDATE then certificates (activation), and plain reads of the
 // ACTIVE assignment; it never locks telemetry_records, assignments or alerts, and never appends to the audit log.
 
 import com.vitalsshield.server.admin.AdminProperties;
@@ -192,7 +192,7 @@ public class EnrollmentService {
                     req.deviceId(), req.dekSpkiDer(), provisionedAt.toEpochMilli());
             byte[] der = kmsSigner.signDigestBlocking(kmsKeys.requireArn(KeyPurpose.REGISTRY_ANCHOR), sha256(anchorBytes));
             dekAnchorSig = Base64.getEncoder().encodeToString(der);
-            cert = issuer.issueDeviceLeaf(req.deviceId(), olkSpki, pki.deviceLeafTtl(), claim.serial());
+            cert = issuer.issueDeviceLeaf(req.deviceId(), olkSpki, pki.leafTtl(), claim.serial());
         } catch (RuntimeException e) {
             log.warn("Enrollment for {} hit a transient failure; token returned: {}", req.deviceId(), e.toString());
             return transientFailure(req, claim, cert);

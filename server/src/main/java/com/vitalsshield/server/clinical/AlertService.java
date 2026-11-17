@@ -1,7 +1,7 @@
 package com.vitalsshield.server.clinical;
 
-// LOCK ORDER (DECISIONS #70), in every transaction: devices -> telemetry_records -> patient_device_assignments
-// -> clinical_alerts -> audit advisory lock LAST. This class: the clinical_alerts row FOR UPDATE, then the audit lock.
+// LOCK ORDER (DECISIONS #82, extends #70), in every transaction: devices -> certificates -> telemetry_records
+// -> patient_device_assignments -> clinical_alerts -> audit advisory lock LAST. This class: the clinical_alerts row FOR UPDATE, then the audit lock.
 
 import com.vitalsshield.server.audit.AuditLog;
 import java.util.LinkedHashMap;

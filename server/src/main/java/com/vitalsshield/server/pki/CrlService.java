@@ -298,7 +298,7 @@ public class CrlService {
         for (Entry e : revokedCertificates(ca, now)) {
             bySerial.putIfAbsent(e.serial(), e);
         }
-        Instant cutoff = now.minus(pki.deviceLeafTtl()).minus(Duration.ofHours(1));
+        Instant cutoff = now.minus(pki.leafTtl()).minus(Duration.ofHours(1));
         jdbc.query("""
                 SELECT serial_number, voided_at FROM issued_serials
                  WHERE issuer_key_hash = ? AND status = 'VOIDED' AND reserved_at > ?

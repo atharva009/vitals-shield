@@ -99,21 +99,26 @@ public class SignerRevocationService {
      */
     public Mono<BulkRevocation> revokeAllForDevice(String deviceId, String reason, long t0Nanos) {
         Instant[] revokedAtHolder = new Instant[1];
-        return Mono.fromCallable(() -> {
+        return Mono.fromCallable(() -> tx.execute(status -> {
+                    // Lock order (DECISIONS #82): the device row, then its certificate rows. Holding the device lock
+                    // means no renewal (Tx 2) or first-use activation can add or switch a certificate between this
+                    // SELECT and the UPDATE, so every key revoked below is also deny-listed.
+                    jdbc.queryForList("SELECT 1 FROM devices WHERE device_id = ? FOR UPDATE", deviceId);
                     List<CertKey> keys = jdbc.query("""
                             SELECT issuer_key_hash, serial_number FROM certificates
                              WHERE device_id = ? AND status IN ('ACTIVE', 'ISSUED_PENDING_USE', 'RENEWED')
+                             FOR UPDATE
                             """, (rs, i) -> CertKey.of(rs.getString(1), rs.getString(2)), deviceId);
                     Instant revokedAt = clock.instant();
                     revokedAtHolder[0] = revokedAt;
-                    keys.forEach(k -> denyList.add(k, revokedAt, "REVOKED")); // before the DB write: fail closed
-                    tx.executeWithoutResult(status -> jdbc.update("""
+                    keys.forEach(k -> denyList.add(k, revokedAt, "REVOKED")); // before commit: fail closed
+                    jdbc.update("""
                             UPDATE certificates
                                SET status = 'REVOKED', revoked_at = ?, revocation_reason = ?
                              WHERE device_id = ? AND status IN ('ACTIVE', 'ISSUED_PENDING_USE', 'RENEWED')
-                            """, Timestamp.from(revokedAt), reason, deviceId));
+                            """, Timestamp.from(revokedAt), reason, deviceId);
                     return keys;
-                })
+                }))
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMap(keys -> reactor.core.publisher.Flux.fromIterable(keys)
                         .flatMap(k -> (eviction.enabled() ? sessions.evictByCert(k) : Mono.just(0))

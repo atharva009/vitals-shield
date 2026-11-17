@@ -28,6 +28,8 @@ import java.util.stream.Stream;
  * &lt;root&gt;/&lt;device_id&gt;/keys/dek.key      key partition: survives a state reset
  * &lt;root&gt;/&lt;device_id&gt;/state/olk.key     state partition
  * &lt;root&gt;/&lt;device_id&gt;/state/olk.crt
+ * &lt;root&gt;/&lt;device_id&gt;/state/olk-pending.key  Protocol B: renewed key, before its first 200 (DECISIONS #85)
+ * &lt;root&gt;/&lt;device_id&gt;/state/olk-pending.crt
  * &lt;root&gt;/&lt;device_id&gt;/state/state.json
  * </pre>
  * Every write goes to a temp file in the same directory and is then renamed with ATOMIC_MOVE. Private keys are
@@ -67,6 +69,72 @@ public final class SimulatorStateStore {
         return stateDir.resolve("olk.crt");
     }
 
+    public Path olkPendingKeyFile() {
+        return stateDir.resolve("olk-pending.key");
+    }
+
+    public Path olkPendingCertFile() {
+        return stateDir.resolve("olk-pending.crt");
+    }
+
+    /** A renewed key and certificate that have not carried an accepted batch yet. */
+    public record Pending(PrivateKey key, X509Certificate cert) {
+    }
+
+    /**
+     * Persists the renewed key and certificate as pending, key first (both mode 600, atomic rename). A crash between
+     * the two writes leaves a key without a certificate, which {@link #loadPending} ignores.
+     */
+    public void savePending(PrivateKey key, String certPem) {
+        writeAtomic(olkPendingKeyFile(), EcKeys.toPkcs8Pem(key), true);
+        writeAtomic(olkPendingCertFile(), certPem, true);
+    }
+
+    /**
+     * The pending pair, if both files exist. If only the certificate exists, a promotion was interrupted after the key
+     * rename: it is finished here (the certificate is moved over olk.crt) and empty is returned.
+     */
+    public Optional<Pending> loadPending() {
+        boolean key = Files.exists(olkPendingKeyFile());
+        boolean crt = Files.exists(olkPendingCertFile());
+        if (!key && crt) {
+            move(olkPendingCertFile(), olkCertFile());
+            return Optional.empty();
+        }
+        if (!key || !crt) {
+            return Optional.empty();
+        }
+        return Optional.of(new Pending(EcKeys.fromPkcs8Pem(read(olkPendingKeyFile())),
+                parseCert(read(olkPendingCertFile()))));
+    }
+
+    /**
+     * Pending becomes current after its first 200 (DECISIONS #85): atomic rename of the key over olk.key, then of the
+     * certificate over olk.crt. The old key file is replaced, so it no longer exists on disk.
+     */
+    public void promotePending() {
+        move(olkPendingKeyFile(), olkKeyFile());
+        move(olkPendingCertFile(), olkCertFile());
+    }
+
+    /** Deletes a pending pair (re-enrollment). */
+    public void discardPending() {
+        try {
+            Files.deleteIfExists(olkPendingCertFile());
+            Files.deleteIfExists(olkPendingKeyFile());
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    private static void move(Path from, Path to) {
+        try {
+            Files.move(from, to, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            throw new UncheckedIOException("cannot move " + from + " to " + to, e);
+        }
+    }
+
     public Path stateFile() {
         return stateDir.resolve("state.json");
     }
@@ -91,6 +159,7 @@ public final class SimulatorStateStore {
     }
 
     public void saveEnrollment(PrivateKey olkKey, String certPem, SimulatorState state) {
+        discardPending();
         writeAtomic(olkKeyFile(), EcKeys.toPkcs8Pem(olkKey), true);
         writeAtomic(olkCertFile(), certPem, false);
         writeAtomic(stateFile(), state.toJson(), false);

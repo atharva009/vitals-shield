@@ -155,7 +155,7 @@ class CertificateProfileTest {
     }
 
     @Test
-    void deviceLeafTtlIsConfigurable() throws Exception {
+    void leafTtlIsConfigurable() throws Exception {
         X509Certificate shortLeaf = profiles.deviceLeaf("dev_ttl", spki(deviceLeafKey), deviceInt,
                 Duration.ofMinutes(30), signer(deviceIntKey.getPrivate()));
         assertThat(Duration.between(shortLeaf.getNotBefore().toInstant(), shortLeaf.getNotAfter().toInstant()))

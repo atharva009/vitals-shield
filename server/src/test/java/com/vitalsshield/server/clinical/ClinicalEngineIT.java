@@ -144,10 +144,10 @@ class ClinicalEngineIT {
             calib.add(tenth);
             assertThat(ids(a.get("ids"))).containsExactlyElementsOf(calib.stream().map(ClinicalStream.Sent::batchId).toList());
 
-            // Expected ref_* from the exact metrics sent (sample SD, n - 1).
-            CalibrationStats.Stats hr = CalibrationStats.of(calib.stream().mapToDouble(b -> b.metrics().heartRateBpm()).toArray(), 1.0);
-            CalibrationStats.Stats hrv = CalibrationStats.of(calib.stream().mapToDouble(b -> b.metrics().hrvRmssdMs()).toArray(), 1.0);
-            CalibrationStats.Stats spo2 = CalibrationStats.of(calib.stream().mapToDouble(b -> b.metrics().spo2Pct()).toArray(), 0.5);
+            // Expected ref_* from the exact metrics sent (sample SD, n - 1, floors 3.0 / 5.0 / 1.0, DECISIONS #72).
+            CalibrationStats.Stats hr = CalibrationStats.of(calib.stream().mapToDouble(b -> b.metrics().heartRateBpm()).toArray(), 3.0);
+            CalibrationStats.Stats hrv = CalibrationStats.of(calib.stream().mapToDouble(b -> b.metrics().hrvRmssdMs()).toArray(), 5.0);
+            CalibrationStats.Stats spo2 = CalibrationStats.of(calib.stream().mapToDouble(b -> b.metrics().spo2Pct()).toArray(), 1.0);
             assertThat((Double) a.get("ref_hr_mean")).isCloseTo(hr.mean(), within(1e-9));
             assertThat((Double) a.get("ref_hr_sd")).isCloseTo(hr.sd(), within(1e-9));
             assertThat((Double) a.get("ref_hrv_mean")).isCloseTo(hrv.mean(), within(1e-9));

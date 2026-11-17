@@ -175,7 +175,7 @@ class ReconciliationIT {
     @Order(4)
     void prodProfileFailsClosed() {
         PkiProperties prodProps = new PkiProperties(props.publicBaseUrl(), false, props.trustFile(),
-                props.deviceLeafTtl(), props.gatewayLeafTtl());
+                props.leafTtl(), props.gatewayLeafTtl(), props.renewalGrace());
         HierarchyReconciler prod = new HierarchyReconciler(
                 jdbc, tx, keyAdmin, kmsSigner, profiles, issuers, prodProps);
         kms.scheduleKeyDeletion(r -> r.keyId(activeKeysByPurpose().get("ROOT_CA")).pendingWindowInDays(7));

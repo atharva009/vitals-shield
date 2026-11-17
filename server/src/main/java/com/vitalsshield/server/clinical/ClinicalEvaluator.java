@@ -1,7 +1,7 @@
 package com.vitalsshield.server.clinical;
 
-// LOCK ORDER (DECISIONS #70), in every transaction: devices -> telemetry_records -> patient_device_assignments
-// -> clinical_alerts -> audit advisory lock LAST. This class: devices FOR KEY SHARE, the telemetry row FOR UPDATE,
+// LOCK ORDER (DECISIONS #82, extends #70), in every transaction: devices -> certificates -> telemetry_records
+// -> patient_device_assignments -> clinical_alerts -> audit advisory lock LAST. This class: devices FOR KEY SHARE, the telemetry row FOR UPDATE,
 // the assignment row FOR NO KEY UPDATE, then clinical_alerts inserts. It never takes the audit lock.
 
 import com.vitalsshield.server.telemetry.TelemetryMetrics;
@@ -94,9 +94,23 @@ public class ClinicalEvaluator {
         return props;
     }
 
-    /** Queues the batch behind earlier batches of the same assignment. Non-blocking. */
-    public void submit(String deviceId, UUID assignmentId, UUID batchId) {
-        pending.incrementAndGet();
+    /**
+     * Queues the batch behind earlier batches of the same assignment. Non-blocking. Returns false when the queue is
+     * full (DECISIONS #79): the batch stays unevaluated, the overflow is counted, and it is never replayed later.
+     */
+    public boolean submit(String deviceId, UUID assignmentId, UUID batchId) {
+        int cap = props.queueCapacity();
+        while (true) {
+            int now = pending.get();
+            if (now >= cap) {
+                metrics.increment("clinical.queue_overflows");
+                log.warn("Clinical queue full ({} of {}): {} batch {} stays unevaluated", now, cap, deviceId, batchId);
+                return false;
+            }
+            if (pending.compareAndSet(now, now + 1)) {
+                break;
+            }
+        }
         @SuppressWarnings("unchecked")
         CompletableFuture<Void>[] mine = new CompletableFuture[1];
         tails.compute(assignmentId, (k, tail) -> {
@@ -109,6 +123,7 @@ public class ClinicalEvaluator {
             tails.remove(assignmentId, mine[0]);
             pending.decrementAndGet();
         });
+        return true;
     }
 
     @jakarta.annotation.PreDestroy
@@ -285,14 +300,20 @@ public class ClinicalEvaluator {
                 baseline == null ? null : baseline.hrvMean(), baseline == null ? null : baseline.hrvSd(),
                 baseline == null ? null : baseline.spo2Mean(), baseline == null ? null : baseline.spo2Sd(),
                 row.assignmentId());
+        List<UUID> alertIds = new java.util.ArrayList<>();
         for (NewAlert n : alerts) {
+            UUID alertId = UUID.randomUUID();
+            alertIds.add(alertId);
             jdbc.update("""
                     INSERT INTO clinical_alerts (alert_id, device_id, assignment_id, baseline_version, alert_type,
                                                  alert_status, triggering_batch_ids, explanation_summary, condition_code)
                     VALUES (?, ?, ?, ?, ?::alert_severity_type, 'ACTIVE', ?::uuid[], ?, ?)
-                    """, UUID.randomUUID(), deviceId, row.assignmentId(), n.baselineVersion(), n.type(),
+                    """, alertId, deviceId, row.assignmentId(), n.baselineVersion(), n.type(),
                     literal(n.batchIds()), n.explanation(), n.conditionCode());
             metrics.increment("clinical.alerts." + n.type());
+        }
+        if (!alertIds.isEmpty()) {
+            hooks.afterAlertsInserted(deviceId, batchId, alertIds);
         }
         jdbc.update("""
                 UPDATE telemetry_records SET activity_context = ?, clinical_evaluated_at = ?

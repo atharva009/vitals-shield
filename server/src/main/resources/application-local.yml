@@ -7,6 +7,10 @@ vitalsshield:
   pki:
     # Local profile only: a missing/disabled KMS key rebuilds the whole CA hierarchy.
     allow-hierarchy-rebuild: true
+    # Demo rollover (DECISIONS #83): notBefore is backdated 60 s, so a leaf lives about 3 minutes after issuance and
+    # renews at 2/3 of PT4M, about 1m40s after issuance.
+    leaf-ttl: PT4M
+    renewal-grace: PT60S
   clinical:
     # Demo calibration window (DECISIONS #6, #72): 10 resting batches instead of the default 30.
     calibration-size: 10

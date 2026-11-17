@@ -3,6 +3,8 @@ package com.vitalsshield.server.telemetry;
 import com.vitalsshield.crypto.TelemetryJws;
 import com.vitalsshield.server.clinical.ClinicalEvaluator;
 import com.vitalsshield.server.gateway.ResolvedCert;
+import com.vitalsshield.server.pki.trust.CertKey;
+import com.vitalsshield.server.renewal.CertificateActivationService;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.cert.CertificateEncodingException;
@@ -76,9 +78,11 @@ public class TelemetryIngestService {
     private final TelemetryMetrics metrics;
     private final Clock clock;
     private final ClinicalEvaluator evaluator;
+    private final CertificateActivationService activation;
 
     public TelemetryIngestService(NamedParameterJdbcTemplate jdbc, TelemetryMetrics metrics, Clock clock,
-                                  ClinicalEvaluator evaluator) {
+                                  ClinicalEvaluator evaluator, CertificateActivationService activation) {
+        this.activation = activation;
         this.jdbc = jdbc;
         this.metrics = metrics;
         this.clock = clock;
@@ -139,10 +143,6 @@ public class TelemetryIngestService {
             throw new IngestRejection(409, body);
         }
 
-        // PHASE 8 HOOK: first-use switchover. If cert.status() is ISSUED_PENDING_USE, this is the first valid batch
-        // signed by the renewed certificate: call the Signer RPC to make it ACTIVE and move superseded_serial to RENEWED
-        // (grace_expires_at = NOW() + 60 s) before or atomically with the insert below.
-
         // 6. Classification (DECISIONS #46).
         String trustState = TelemetryClassifier.classify(p.metrics(), evaluator.properties());
         String payloadSha256 = HexFormat.of().formatHex(sha256(payloadBytes));
@@ -173,10 +173,16 @@ public class TelemetryIngestService {
 
         // 8. Accepted. Clinical evaluation runs after this commit, queued per assignment (DECISIONS #69); it does not
         // delay this response. REJECTED_IMPLAUSIBLE rows are never evaluated, and neither are idempotent retries.
+        // First-use switchover (spec Section 4 Protocol B step 4): a new batch signed by an ISSUED_PENDING_USE
+        // certificate activates it, off the response path and before this batch's evaluation is queued.
         if (!inserted.isEmpty()) {
             metrics.increment("accepted." + trustState);
-            if (!"REJECTED_IMPLAUSIBLE".equals(trustState)) {
-                evaluator.submit(p.deviceId(), p.assignmentId(), p.batchId());
+            Runnable evaluate = "REJECTED_IMPLAUSIBLE".equals(trustState) ? () -> { }
+                    : () -> evaluator.submit(p.deviceId(), p.assignmentId(), p.batchId());
+            if ("ISSUED_PENDING_USE".equals(cert.status())) {
+                activation.activateAsync(cert.deviceId(), new CertKey(cert.issuerKeyHash(), cert.serial()), evaluate);
+            } else {
+                evaluate.run();
             }
             return ok(p.batchId(), trustState, false);
         }

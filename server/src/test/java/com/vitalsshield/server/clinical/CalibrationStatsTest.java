@@ -25,9 +25,9 @@ class CalibrationStatsTest {
         List<BatchMetrics> flat = java.util.Collections.nCopies(10, new BatchMetrics(66, 50, 98, 4, 0, 0.02));
         CalibrationStats.Baseline b = CalibrationStats.compute(flat, P);
         assertThat(b.hrMean()).isEqualTo(66);
-        assertThat(b.hrSd()).isEqualTo(1.0);
-        assertThat(b.hrvSd()).isEqualTo(1.0);
-        assertThat(b.spo2Sd()).isEqualTo(0.5);
+        assertThat(b.hrSd()).isEqualTo(3.0);
+        assertThat(b.hrvSd()).isEqualTo(5.0);
+        assertThat(b.spo2Sd()).isEqualTo(1.0);
     }
 
     @Test

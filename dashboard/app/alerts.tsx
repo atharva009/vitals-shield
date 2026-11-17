@@ -120,7 +120,7 @@ export function AlertsPanel({
                 <td>
                   <span className={`${s.chip} ${s.chipMuted}`}>{TYPE_LABEL[a.alert_type] ?? a.alert_type}</span>
                 </td>
-                <td className={s.mono}>{a.condition_code ?? "–"}</td>
+                <td className={`${s.mono} ${s.code}`}>{a.condition_code ?? "–"}</td>
                 <td>{a.explanation}</td>
                 <td className={s.num} title={a.triggering_batch_ids_short.join("\n")}>
                   {a.triggering_batch_count}

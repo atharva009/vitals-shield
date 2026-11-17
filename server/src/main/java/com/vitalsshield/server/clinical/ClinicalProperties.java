@@ -6,7 +6,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
 /**
- * {@code vitalsshield.clinical.*}: every threshold the clinical engine uses (spec Section 6). The defaults are the
+ * {@code queueCapacity} caps evaluations queued or running in this process (DECISIONS #79); overflow stays unevaluated.
+ *
+ * <p>{@code vitalsshield.clinical.*}: every threshold the clinical engine uses (spec Section 6). The defaults are the
  * spec's values. They are engineering defaults and have not been clinically validated (spec Section 6 disclaimer).
  * {@link #defaults()} returns the same values for unit tests; ClinicalPropertiesTest checks the two agree.
  */
@@ -23,7 +25,8 @@ public record ClinicalProperties(
         @DefaultValue("30") int calibrationSize,
         @DefaultValue Drift drift,
         @DefaultValue SdFloors sdFloors,
-        @DefaultValue("PT5M") Duration acuteDedupeWindow) {
+        @DefaultValue("PT5M") Duration acuteDedupeWindow,
+        @DefaultValue("1000") int queueCapacity) {
 
     /** SIGNAL_DEGRADED batches that also show a critical reading (spec Section 6 step 3, DECISIONS #71). */
     public record DegradedCritical(@DefaultValue("90.0") double spo2Max, @DefaultValue("40") int hrMaxLow,
@@ -43,8 +46,8 @@ public record ClinicalProperties(
     }
 
     /** Lower bounds on the calibrated SD, so a flat calibration cannot make every later batch a breach (DECISIONS #72). */
-    public record SdFloors(@DefaultValue("1.0") double hr, @DefaultValue("1.0") double hrv,
-                           @DefaultValue("0.5") double spo2) {
+    public record SdFloors(@DefaultValue("3.0") double hr, @DefaultValue("5.0") double hrv,
+                           @DefaultValue("1.0") double spo2) {
     }
 
     public int hrMin() {
@@ -67,12 +70,12 @@ public record ClinicalProperties(
     public static ClinicalProperties defaults() {
         return new ClinicalProperties(List.of(15, 300), List.of(40.0, 100.0), 0, 0.05, Duration.ofMinutes(5), 0.5,
                 new DegradedCritical(90.0, 40, 150, 3), new Acute(140, 40, 0.95, 208, 0.7, 90.0), 30,
-                new Drift(2.0, -1.8, -1.5, 2, 4), new SdFloors(1.0, 1.0, 0.5), Duration.ofMinutes(5));
+                new Drift(2.0, -1.8, -1.5, 2, 4), new SdFloors(3.0, 5.0, 1.0), Duration.ofMinutes(5), 1000);
     }
 
     /** Same thresholds with a different calibration window (the demo profile uses 10). */
     public ClinicalProperties withCalibrationSize(int size) {
         return new ClinicalProperties(hrBounds, spo2Bounds, restingCadenceMax, restingMotionMax, restingSustain,
-                perfusionMin, degradedCritical, acute, size, drift, sdFloors, acuteDedupeWindow);
+                perfusionMin, degradedCritical, acute, size, drift, sdFloors, acuteDedupeWindow, queueCapacity);
     }
 }

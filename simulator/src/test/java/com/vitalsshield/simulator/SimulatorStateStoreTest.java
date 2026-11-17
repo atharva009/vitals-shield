@@ -138,4 +138,44 @@ class SimulatorStateStoreTest {
         store.writeScenario(Scenario.LOW_PERFUSION_CRITICAL);
         assertThat(store.readScenario()).contains(Scenario.LOW_PERFUSION_CRITICAL);
     }
+
+    @Test
+    void pendingIsSavedPromotedAndDiscarded() throws IOException {
+        SimulatorStateStore store = new SimulatorStateStore(root, "dev_p");
+        store.saveEnrollment(EcKeys.generateP256().getPrivate(), CERT_PEM, state(0));
+        assertThat(store.loadPending()).isEmpty();
+
+        java.security.KeyPair next = EcKeys.generateP256();
+        store.savePending(next.getPrivate(), CERT_PEM);
+        assertThat(store.loadPending()).isPresent();
+        if (SimulatorStateStore.posix()) {
+            assertThat(Files.getPosixFilePermissions(store.olkPendingKeyFile()))
+                    .isEqualTo(SimulatorStateStore.OWNER_RW);
+            assertThat(Files.getPosixFilePermissions(store.olkPendingCertFile()))
+                    .isEqualTo(SimulatorStateStore.OWNER_RW);
+        }
+
+        store.promotePending();
+        assertThat(Files.exists(store.olkPendingKeyFile())).isFalse();
+        assertThat(Files.exists(store.olkPendingCertFile())).isFalse();
+        assertThat(store.load().orElseThrow().olkKey().getEncoded()).isEqualTo(next.getPrivate().getEncoded());
+
+        store.savePending(EcKeys.generateP256().getPrivate(), CERT_PEM);
+        store.saveEnrollment(EcKeys.generateP256().getPrivate(), CERT_PEM, state(0)); // re-enrollment drops pending
+        assertThat(store.loadPending()).isEmpty();
+        assertThat(Files.exists(store.olkPendingKeyFile())).isFalse();
+    }
+
+    @Test
+    void interruptedPromotionIsFinishedOnLoad() throws IOException {
+        SimulatorStateStore store = new SimulatorStateStore(root, "dev_q");
+        store.saveEnrollment(EcKeys.generateP256().getPrivate(), CERT_PEM, state(0));
+        java.security.KeyPair next = EcKeys.generateP256();
+        store.savePending(next.getPrivate(), CERT_PEM);
+        // Crash after the key rename, before the certificate rename.
+        Files.move(store.olkPendingKeyFile(), store.olkKeyFile(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        assertThat(store.loadPending()).isEmpty();
+        assertThat(Files.exists(store.olkPendingCertFile())).isFalse();
+        assertThat(store.load()).isPresent();
+    }
 }

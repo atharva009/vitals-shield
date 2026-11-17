@@ -28,6 +28,13 @@ class ClinicalPropertiesTest {
     }
 
     @Test
+    void phase8DefaultsForFloorsAndQueue() {
+        ClinicalProperties d = ClinicalProperties.defaults();
+        assertThat(d.sdFloors()).isEqualTo(new ClinicalProperties.SdFloors(3.0, 5.0, 1.0));
+        assertThat(d.queueCapacity()).isEqualTo(1000);
+    }
+
+    @Test
     void alertTransitions() {
         assertThat(AlertTransitions.allowed("ACTIVE", "ACKNOWLEDGED")).isTrue();
         assertThat(AlertTransitions.allowed("ACTIVE", "RESOLVED")).isTrue();

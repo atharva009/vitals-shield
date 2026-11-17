@@ -22,7 +22,9 @@ vitalsshield:
     # Production default: never regenerate CA keys; a missing key fails startup.
     allow-hierarchy-rebuild: false
     trust-file: var/trust/root-ca.pem
-    device-leaf-ttl: PT12H
+    leaf-ttl: PT12H
+    # Protocol B: a RENEWED certificate keeps working this long after its successor's first batch (DECISIONS #84).
+    renewal-grace: PT60S
     gateway-leaf-ttl: PT24H
   listeners:
     bind-host: 127.0.0.1

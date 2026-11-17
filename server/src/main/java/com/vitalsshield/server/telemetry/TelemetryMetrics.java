@@ -16,6 +16,10 @@ public class TelemetryMetrics {
         counters.computeIfAbsent(name, k -> new AtomicLong()).incrementAndGet();
     }
 
+    public void add(String name, long delta) {
+        counters.computeIfAbsent(name, k -> new AtomicLong()).addAndGet(delta);
+    }
+
     public long get(String name) {
         AtomicLong c = counters.get(name);
         return c == null ? 0 : c.get();

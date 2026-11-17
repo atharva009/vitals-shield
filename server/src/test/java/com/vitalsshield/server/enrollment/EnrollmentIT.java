@@ -123,6 +123,7 @@ class EnrollmentIT {
     @Autowired TransactionTemplate tx;
     @Autowired DekAnchorVerifier anchorVerifier;
     @Autowired TrustAnchors anchors;
+    @Autowired com.vitalsshield.server.pki.PkiProperties pki;
     @Autowired FlakyKmsSigner flaky;
 
     // ---- happy path ---------------------------------------------------------------------------------------------
@@ -140,8 +141,9 @@ class EnrollmentIT {
         assertThat(cert.getSubjectAlternativeNames()).containsExactly(List.of(6, "urn:vitalsshield:device:dev_happy"));
         assertThat(CertificateProfiles.authorityKeyIdentifier(cert))
                 .isEqualTo(CertificateProfiles.subjectKeyIdentifier(anchors.deviceIntermediate()));
+        // The configured leaf TTL: PT4M in the local profile (DECISIONS #83), PT12H by default.
         assertThat(Duration.between(cert.getNotBefore().toInstant(), cert.getNotAfter().toInstant()))
-                .isEqualTo(Duration.ofHours(12));
+                .isEqualTo(pki.leafTtl()).isEqualTo(Duration.ofMinutes(4));
 
         Map<String, Object> row = jdbc.queryForMap(
                 "SELECT status::text AS status, cert_thumbprint_s256 FROM certificates WHERE device_id = 'dev_happy'");
