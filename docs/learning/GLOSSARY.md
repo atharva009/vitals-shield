@@ -183,6 +183,8 @@ Points.
 the `local` profile, `HierarchyReconciler` throws "KMS hierarchy incomplete; refusing to regenerate CA keys outside
 the local profile" and the app does not start.
 
+**First-use switchover** (Phase 8): The moment a renewed leaf becomes ACTIVE: when the first telemetry batch it signed is accepted (not when /renew answers). The old leaf becomes RENEWED in the same transaction. `CertificateActivationService`.
+
 **Flyway** (Phase 0): A database migration tool. It runs numbered SQL files (`V1__baseline.sql`, ...) in order at
 startup and records each in the `flyway_schema_history` table so it never runs one twice. In Spring Boot 4 it only
 runs if `spring-boot-starter-flyway` is on the classpath.
@@ -195,7 +197,13 @@ runs if `spring-boot-starter-flyway` is on the classpath.
 used to check another implementation. `scripts/golden_vectors.py` (Python stdlib only) produces the expected hex that
 `CanonicalEncodingsTest` compares the Java output against.
 
+**Grace window** (Phase 8): How long a RENEWED leaf keeps working after its successor's first batch: `vitalsshield.pki.renewal-grace`, PT60S. Enforced by the deny-list (`deniedFrom = grace_expires_at`), the per-request status check, and GraceEviction.
+
+**GraceEviction** (Phase 8): The scheduled task that closes every live socket of a RENEWED leaf at its `grace_expires_at` (DECISIONS #84).
+
 **Hash-chained audit log** (Phase 6): `security_audit_log`, where each entry's hash covers the previous entry's hash, so editing any row breaks every later hash. Appends hold `pg_advisory_xact_lock` (DECISIONS #62).
+
+**HMAC challenge** (Phase 8): The stateless Protocol B challenge: `issued_at_ms`, a 16-byte nonce, and HMAC-SHA256 over the purpose, issuer, serial, issued_at and nonce under a 32-byte key made at boot. Valid for 60 s; the GET writes nothing (DECISIONS #81).
 
 **HSM (Hardware Security Module)** (Phase 1): A tamper-resistant device that generates and stores private keys and
 performs signing inside itself, so the key never leaves. AWS KMS keys are backed by HSMs. LocalStack is not: its keys
@@ -212,6 +220,8 @@ leaf certificates. It lets the Root key stay offline and lets you replace a comp
 Root. We have two: the Device Issuing Intermediate and the Server TLS CA.
 
 **Issued serials ledger** (Phase 4): The `issued_serials` table (V2): every device leaf serial is RESERVED before signing, RECORDED on activation, or VOIDED; VOIDED serials go on the CRL and deny-list (DECISIONS #38).
+
+**ISSUED_PENDING_USE** (Phase 8): Certificate status of a renewed leaf before its first accepted batch. It passes the handshake and the per-request check but cannot itself be renewed (409 CERT_NOT_RENEWABLE).
 
 **JWS (JSON Web Signature)** (Phase 4): RFC 7515. In compact form three base64url parts joined by dots: header, payload, signature over `header.payload`. VitalsShield telemetry batches are JWS signed by the device's OLK.
 
@@ -245,6 +255,8 @@ persistence is enabled.
 
 **Loopback** (Phase 2): The network interface that only reaches the same machine, address 127.0.0.1. A socket bound to it cannot be reached from another host. All our listeners bind it by default, and the admin listener always does.
 
+**max_renewal_horizon** (Phase 8 use): Assignment column; past it, renewal answers 409 RENEWAL_HORIZON_EXCEEDED and the device needs a new assignment. Turns renewal into a periodic authorization check.
+
 **Migration** (Phase 0): A versioned script that changes the database schema. Migrations run in order and are never
 edited after they ship; a change goes in a new migration. Our only migration is `V1__baseline.sql`.
 
@@ -252,11 +264,15 @@ edited after they ship; a change goes in a new migration. Our only migration is 
 
 **NewSessionTicket** (Phase 2): A TLS 1.3 message the server sends after the handshake so the client can resume later. The JDK sent one per connection in our tests, 32 bytes with a 1-second lifetime, even with stateless tickets disabled.
 
+**Nonce consumption** (Phase 8): Inserting a challenge nonce into `consumed_challenge_nonces` inside renewal Tx 1, so a second use is 409 CHALLENGE_REPLAYED. Rows are deleted 5 minutes after issued_at.
+
 **OID (Object Identifier)** (Phase 1): A globally unique dotted number that names something in ASN.1, such as
 `1.2.840.10045.4.3.2` for ecdsa-with-SHA256 or `2.5.29.19` for Basic Constraints. Extensions, algorithms, and EKU
 purposes are all identified by OIDs.
 
 **OLK (Operational Leaf Key)** (Phase 3): The wearable's short-lived P-256 key, generated fresh at every enrollment and certified for 12 hours. It is used for mTLS and, from Phase 4, for signing telemetry. Kept in the state partition (`state/olk.key`).
+
+**OLK renewal proof** (Phase 8): The current OLK's ECDSA signature over spec encoding 5 (issuer, serial, issued_at, nonce, sha256(new CSR)). Proves the holder of the current leaf asks for this exact CSR.
 
 **openssl verify** (Phase 1): The OpenSSL command that builds and checks a certificate chain:
 `-CAfile` gives trusted roots, `-untrusted` gives intermediates, and the last argument is the leaf. It prints `OK`
@@ -292,6 +308,8 @@ PKIX.
 
 **Proof of possession** (Phase 3): Evidence that a party holds a private key, usually a signature made with it over data the verifier checks. The CSR signature proves possession of the OLK; the DEK proof signature proves possession of the DEK.
 
+**Protocol B** (Phase 8): Renewal without a human: challenge, OLK proof and CSR, new leaf ISSUED_PENDING_USE, first-use switchover. Spec Section 4.
+
 **PSK (pre-shared key)** (Phase 2): In TLS 1.3 resumption, a secret from an earlier session that the client and server both hold. The client proves it knows the PSK instead of sending a certificate, which is why resumption skips certificate checks.
 
 **PSK resumption** (Phase 2.1): TLS 1.3's way of resuming: the client sends a pre-shared key identity from an earlier session's ticket instead of a certificate, and both sides derive keys from it. No certificate is sent and no trust manager runs. After Phase 2.1 our server refuses every PSK because the session behind it was invalidated.
@@ -319,6 +337,12 @@ refuses to start.
 **Registry anchor** (Phase 3): A KMS Key #4 signature over (device_id, SHA-256 of the DEK public key, provisioning time), stored in `devices.dek_registry_kms_sig`. It lets the server detect a DEK changed by SQL alone. It does not prove the device or key is genuine.
 
 **Relying party (RP) and RP ID** (Phase 6): The website that relies on WebAuthn, named by its RP ID, a domain ("localhost" here). An IP address cannot be an RP ID, so the admin plane runs at http://localhost:8445 (DECISIONS #55).
+
+**Renewal due** (Phase 8): `not_before + 2/3 x (not_after - not_before)` (DECISIONS #83). A 12 h leaf renews at 8 h; a PT4M demo leaf about 1m40s after issuance, because notBefore is backdated 60 s.
+
+**RENEWED** (Phase 8): Certificate status of a leaf whose successor has been used. Accepted until `grace_expires_at`, then superseded; the sweeper marks it EXPIRED at not_after.
+
+**REPLACED_BEFORE_USE** (Phase 8 use): Revocation reason for a signed leaf that never carried a batch: an earlier pending renewal replaced by a later one, or a leaf signed during an aborted renewal or enrollment. CRL reason superseded.
 
 **Replay window** (Phase 4): The 64-bit `replay_bitmap` plus `last_sequence_num` on each device: a sequence is accepted once if it is newer than the newest or at most 63 behind with its bit clear.
 

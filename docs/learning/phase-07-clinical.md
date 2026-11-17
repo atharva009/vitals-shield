@@ -107,6 +107,9 @@ minimum SD per metric (HR 1.0 bpm, HRV 1.0 ms, SpO2 0.5 percentage points, DECIS
 normal noise of the sensor, so a breach always means a change larger than measurement noise.
 `CalibrationStatsTest.floorAppliedWhenAllValuesAreEqual` checks it.
 
+Changed in Phase 8: the floors are now HR 3.0 bpm, HRV 5.0 ms, SpO2 1.0 pct (DECISIONS #72). With the Phase 7
+floors, the 10-batch demo calibration gave HR SD 1.9 and drift z-scores near +9.
+
 ### Why only resting batches calibrate
 
 Heart rate during exercise depends on the exercise, not on the person's underlying state. If walking batches went into
@@ -379,6 +382,8 @@ plausibility bounds. The engine adds:
   escalation.
 - *Lost evaluations on a crash.* A batch accepted just before a crash stays unevaluated (visible on the dashboard);
   there is no re-queue at startup.
+  Changed in Phase 8: the queue is capped at vitalsshield.clinical.queue-capacity (default 1000, DECISIONS #79);
+  overflow stays unevaluated and is counted as clinical.queue_overflows on the overview.
 
 ## 6. Design decisions (DECISIONS #68 to #77)
 

@@ -17,6 +17,7 @@ from the spec.
 | 5 | [Operator dashboard: overview API, KMS health monitor, Next.js on the admin port](phase-05-dashboard.md) | `c9645f8` |
 | 6 | [WebAuthn admin plane: passkeys, action-bound step-up, KMS-anchored passkey registry](phase-06-webauthn.md) ([manual Touch ID check](phase-06-manual-touchid.md)) | `7c2873d`, 6.1: `309377e` |
 | 7 | [Clinical engine: activity context, acute and drift alerts with lineage, compressed clock](phase-07-clinical.md) | `5fc4a79` |
+| 8 | [Protocol B renewal: first-use switchover, grace drain, demo TTL rollover](phase-08-renewal.md) | `9b038ea` |
 | | [Glossary](GLOSSARY.md) | |
 
 ## How the whole system fits together
@@ -82,3 +83,11 @@ alert recording its triggering batches and, for drift, its baseline version. Eve
 retracts it or the evaluation sees the device is no longer ACTIVE. The audit log is append-only by trigger, demo resets
 drop the Compose Postgres volume, and the simulator's compressed clock (one batch per second, one minute apart in
 measured time) is persisted and drives five switchable scenarios.
+
+Phase 8 added Protocol B renewal. A device with an ACTIVE leaf fetches a stateless HMAC challenge, signs it with its
+current key together with a CSR for a new key, and gets a new leaf that stays ISSUED_PENDING_USE until a batch signed
+by it is accepted. Then the old leaf becomes RENEWED, keeps working for a 60 s grace window, and is refused at the
+handshake with its sockets closed once the grace ends. An unused pending leaf replaced by a later renewal is revoked
+as REPLACED_BEFORE_USE and listed on the CRL, every renewal serial goes through the issued_serials ledger, and a
+sweeper expires leaves past not_after. The demo leaf is PT4M, so the dashboard shows a rollover every 1m40s. The
+clinical queue is capped and its overflow counted, and the SD floors were widened.
