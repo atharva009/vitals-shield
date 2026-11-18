@@ -34,8 +34,11 @@ export type Device = {
   /** Protocol B: superseded, accepted until grace_expires_at. */
   renewed_cert: LifecycleCert | null;
   live_sockets: number;
-  /** DECISIONS #77: certificate revoked but the quarantine transaction did not commit. */
-  needs_attention: "CERT_REVOKED_STATE_ACTIVE" | null;
+  /**
+   * DECISIONS #77: certificate revoked but the quarantine transaction did not commit.
+   * DECISIONS #87: newest certificate EXPIRED with no ACTIVE or pending successor.
+   */
+  needs_attention: "CERT_REVOKED_STATE_ACTIVE" | "CERT_EXPIRED_NO_SUCCESSOR" | null;
 };
 
 export type LifecycleCert = {

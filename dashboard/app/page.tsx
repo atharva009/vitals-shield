@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { ALL_BOOT_STEPS, api, AuthStatus, Overview, Quarantine, SESSION, TelemetryRow, Unauthorized } from "./api";
+import { ALL_BOOT_STEPS, api, AuthStatus, Device, Overview, Quarantine, SESSION, TelemetryRow, Unauthorized } from "./api";
 import { AlertsPanel } from "./alerts";
 import { AuditPanel, PasskeySignIn, ProvisionPanel, stepUp } from "./passkeys";
 import s from "./page.module.css";
@@ -10,6 +10,10 @@ import { read, subscribe, UNKNOWN, write } from "./storage";
 const CODE_KEY = "vitalsshield.adminCode"; // sessionStorage, until WebAuthn (DECISIONS #47)
 const CONTRAST_KEY = "vitalsshield.highContrast"; // localStorage
 const CRL_URL = "https://127.0.0.1:8444/api/v1/pki/intermediate-crl.pem";
+const ATTENTION_HINT: Record<NonNullable<Device["needs_attention"]>, string> = {
+  CERT_REVOKED_STATE_ACTIVE: "Certificate revoked but quarantine incomplete: retry quarantine", // DECISIONS #77
+  CERT_EXPIRED_NO_SUCCESSOR: "Device must re-enroll (Protocol C) or be re-provisioned", // DECISIONS #87
+};
 
 // ---- small helpers ----------------------------------------------------------------------------------------------
 
@@ -518,8 +522,12 @@ export default function Page() {
                     <span className={`${s.chip} ${stateClass(d.trust_state)}`}>{d.trust_state}</span>
                   </Flash>{" "}
                   {d.needs_attention && (
-                    <span className={`${s.chip} ${s.chipWarn}`} title="Certificate revoked but quarantine incomplete: retry quarantine">
-                      NEEDS ATTENTION
+                    <span
+                      className={`${s.chip} ${s.chipWarn}`}
+                      data-testid="needs-attention"
+                      title={ATTENTION_HINT[d.needs_attention]}
+                    >
+                      {d.needs_attention === "CERT_EXPIRED_NO_SUCCESSOR" ? d.needs_attention : "NEEDS ATTENTION"}
                     </span>
                   )}
                 </td>
@@ -660,8 +668,13 @@ export default function Page() {
               </div>
             </div>
           )}
-          {device.needs_attention === "CERT_REVOKED_STATE_ACTIVE" && (
-            <div className={s.attention}>Certificate revoked but quarantine incomplete: retry quarantine</div>
+          {device.needs_attention && (
+            <div className={s.attention} data-testid="attention-hint">
+              {device.needs_attention === "CERT_EXPIRED_NO_SUCCESSOR" && (
+                <span className={`${s.chip} ${s.chipWarn}`}>CERT_EXPIRED_NO_SUCCESSOR</span>
+              )}{" "}
+              {ATTENTION_HINT[device.needs_attention]}
+            </div>
           )}
           {device.assignment && (
             <Flash value={[device.assignment.baseline_state, device.assignment.baseline_version]}>

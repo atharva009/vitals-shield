@@ -11,6 +11,7 @@ import com.vitalsshield.server.pki.HierarchyReconciler;
 import com.vitalsshield.server.pki.ReconcileResult;
 import com.vitalsshield.server.pki.TrustAnchors;
 import com.vitalsshield.server.pki.trust.CertificateDenyList;
+import com.vitalsshield.server.renewal.RenewalSweepers;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,10 +23,10 @@ import org.springframework.stereotype.Component;
 
 /**
  * Ordered startup after context refresh (Flyway has already migrated): reconcile hierarchy, issue gateway TLS
- * material, reload trust anchors, seed the deny-list, publish CRLs, issue the admin setup code, and only then bind the
- * listeners. A sweep of stale serial reservations runs right after reconciliation. Runs on the boot thread, so the
- * blocking KMS and JDBC calls are allowed here. Disabled with {@code vitalsshield.boot.enabled=false}, in which case
- * nothing binds.
+ * material, reload trust anchors, seed the deny-list (and sweep certificates past not_after, DECISIONS #87), publish
+ * CRLs, issue the admin setup code, and only then bind the listeners. A sweep of stale serial reservations runs right
+ * after reconciliation. Runs on the boot thread, so the blocking KMS and JDBC calls are allowed here. Disabled with
+ * {@code vitalsshield.boot.enabled=false}, in which case nothing binds.
  */
 @Component
 @ConditionalOnProperty(name = "vitalsshield.boot.enabled", havingValue = "true", matchIfMissing = true)
@@ -43,11 +44,12 @@ public class BootSequence implements ApplicationRunner {
     private final KmsHealthMonitor kmsHealth;
     private final ListenerManager listeners;
     private final ApplicationEventPublisher events;
+    private final RenewalSweepers sweepers;
 
     public BootSequence(HierarchyReconciler reconciler, GatewayTlsMaterial gatewayTls, TrustAnchors trustAnchors,
                         CertificateDenyList denyList, CrlService crls, IssuedSerialLedger ledger,
                         AdminSetupCode adminCode, KmsHealthMonitor kmsHealth, ListenerManager listeners,
-                        ApplicationEventPublisher events) {
+                        ApplicationEventPublisher events, RenewalSweepers sweepers) {
         this.reconciler = reconciler;
         this.gatewayTls = gatewayTls;
         this.trustAnchors = trustAnchors;
@@ -58,6 +60,7 @@ public class BootSequence implements ApplicationRunner {
         this.kmsHealth = kmsHealth;
         this.listeners = listeners;
         this.events = events;
+        this.sweepers = sweepers;
     }
 
     @Override
@@ -87,6 +90,9 @@ public class BootSequence implements ApplicationRunner {
 
         denyList.seedFromDb();
         denyList.startPeriodicRefresh();
+        // DECISIONS #87: part of this step, not a new one. A certificate that expired while the server was down is
+        // deny-listed and marked EXPIRED before the listeners bind.
+        log.info("Boot expiry sweep: {} certificate(s) marked EXPIRED", sweepers.sweepExpired().size());
         events.publishEvent(new BootStepCompleted(BootStep.DENY_LIST_SEEDED));
 
         // Sign both CRLs now so the first HTTP GET is served from the cache (DECISIONS.md #27).

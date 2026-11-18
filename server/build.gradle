@@ -46,6 +46,11 @@ tasks.named('bootRun') {
 
 tasks.withType(Test).configureEach {
     systemProperty 'vitalsshield.repoRoot', rootProject.projectDir.absolutePath
+    // Every integration class has its own Postgres container and ports, so no Spring test context is ever reused by
+    // another class. A cached context outlives its container and keeps running its periodic jobs (deny-list refresh,
+    // KMS health, CRL watch) against a dead database, each blocking a shared boundedElastic thread for the 30 s
+    // connection timeout; that starved ConcurrentDuplicateIT's ingests in full runs. Keep only the current context.
+    systemProperty 'spring.test.context.cache.maxSize', '1'
 }
 
 // Dev-only seed tool (DECISIONS #32): runs from the test classpath against the local Compose database.

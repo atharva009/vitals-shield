@@ -329,6 +329,12 @@ public class AdminOverviewService {
                         AND EXISTS (SELECT 1 FROM certificates r WHERE r.device_id = d.device_id AND r.status = 'REVOKED')
                         AND NOT EXISTS (SELECT 1 FROM certificates r WHERE r.device_id = d.device_id
                                                                          AND r.status <> 'REVOKED')) AS cert_revoked_active,
+                       -- DECISIONS #87: the newest certificate expired and nothing will replace it.
+                       ((SELECT n.status FROM certificates n WHERE n.device_id = d.device_id
+                          ORDER BY n.not_before DESC LIMIT 1) = 'EXPIRED'
+                        AND NOT EXISTS (SELECT 1 FROM certificates r WHERE r.device_id = d.device_id
+                                                                         AND r.status IN ('ACTIVE', 'ISSUED_PENDING_USE')))
+                           AS cert_expired_no_successor,
                        c.serial_number, c.not_before, c.not_after, c.status::text AS cert_status, c.cert_thumbprint_s256
                   FROM devices d
                   LEFT JOIN patient_device_assignments a ON a.device_id = d.device_id AND a.status = 'ACTIVE'
@@ -393,7 +399,9 @@ public class AdminOverviewService {
             m.put("renewed_cert", lifecycleCert(id, "RENEWED"));
             m.put("live_sockets", liveByDevice.getOrDefault(id, 0));
             // DECISIONS #77: the certificate was revoked but the quarantine transaction did not commit.
-            m.put("needs_attention", rs.getBoolean("cert_revoked_active") ? "CERT_REVOKED_STATE_ACTIVE" : null);
+            // DECISIONS #87: the newest certificate is EXPIRED with no ACTIVE or pending successor.
+            m.put("needs_attention", rs.getBoolean("cert_revoked_active") ? "CERT_REVOKED_STATE_ACTIVE"
+                    : rs.getBoolean("cert_expired_no_successor") ? "CERT_EXPIRED_NO_SUCCESSOR" : null);
             out.add(m);
         });
         return out;
