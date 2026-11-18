@@ -23,3 +23,7 @@ Run through this before the demo slot. Later phases append to it.
       with Touch ID; after that the setup code no longer works for anything (DECISIONS #60). Sessions are in memory:
       a server restart means signing in again. `scripts/demo-cli.sh` now waits for the dashboard quarantine (Touch
       ID); its curl mode works only with `--vitalsshield.admin.auth=bearer`, the cut path.
+- [ ] Phase 8.1: run the server and the simulator under `caffeinate -dimsu` (or keep the lid open and on power). With
+      the demo PT4M leaves, any sleep longer than about 2 minutes expires the device's certificate and ends the stream
+      (exit 4).
+- [ ] Do not leave a PT4M device streaming unattended; use the default 12 h profile for long runs.

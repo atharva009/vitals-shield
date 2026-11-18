@@ -202,6 +202,10 @@ does nothing).
   CRL republished;
 - every 5 minutes, consumed nonces past `expires_at` are deleted.
 
+Changed in Phase 8.1: the expiry sweep runs one transaction per certificate (devices FOR UPDATE, then certificates FOR
+UPDATE), compares `not_after` with the server clock instead of Postgres `NOW()`, logs the previous status, and also runs
+once at boot inside DENY_LIST_SEEDED. See section 11.
+
 ### Simulator
 
 ```
@@ -432,8 +436,156 @@ accept from the old leaf anyway (it is the same key). After that the handshake i
 and the per-request check reads `grace_expires_at`. A stolen key is a quarantine case: quarantine revokes the RENEWED,
 ACTIVE and pending leaves together with no grace.
 
+**Q: What happens if a device is offline past its certificate's expiry?**
+A: It is locked out until someone re-provisions it. The leaf's notAfter has passed, so the handshake fails certificate
+validation, and a request on a socket that was already open gets 403 `cert_expired` from the per-request check. Within
+30 s the expiry sweep deny-lists the leaf from `not_after`, marks it EXPIRED and closes its live sockets; if the server
+was down at the time, the boot sweep does this before the listeners bind. The simulator prints `REJECTED cert_expired`
+and exits 4. It cannot renew, because renewal requires a valid current leaf. The overview flags the device
+`CERT_EXPIRED_NO_SUCCESSOR`, and today the fix is a new bootstrap token and a fresh enrollment. Phase 9 adds automatic
+re-enrollment with the device key (Protocol C).
+
 **Q: Why HMAC challenges instead of a challenge table?**
 A: A table makes every GET a write and needs cleanup, and it proves nothing more: the HMAC tag already proves the
 server issued the challenge, for which certificate, and when. The one thing a tag cannot stop is reuse, so the nonce is
 written once, when it is spent, inside the renewal transaction. A restart drops the HMAC key, which invalidates every
 outstanding challenge without any cleanup.
+
+## 11. Changed in Phase 8.1
+
+### The soak run as evidence
+
+After the Phase 8 commit, `dev_renew_001` streamed against `bootRun` with the local profile (PT4M leaves, PT60S grace)
+until the laptop lid closed. The numbers below come from the database, with this query:
+
+```sql
+SELECT count(*) AS batches_accepted,
+       min(ingested_at) AS first_ingested, max(ingested_at) AS last_ingested,
+       max(ingested_at) - min(ingested_at) AS span,
+       count(DISTINCT serial_number) AS certs_used,
+       max(sequence_number) AS last_seq
+  FROM telemetry_records WHERE device_id = 'dev_renew_001';
+
+SELECT count(*) AS renewals,
+       min(activated_at - issued_at) AS min_issue_to_activation,
+       max(activated_at - issued_at) AS max_issue_to_activation,
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM activated_at - issued_at) * 1000)
+           AS median_ms
+  FROM certificates WHERE device_id = 'dev_renew_001' AND superseded_serial IS NOT NULL;
+
+SELECT min(gap) AS min_gap, max(gap) AS max_gap, avg(gap) AS avg_gap
+  FROM (SELECT issued_at - lag(issued_at) OVER (ORDER BY issued_at) AS gap
+          FROM certificates WHERE device_id = 'dev_renew_001') g WHERE gap IS NOT NULL;
+```
+
+```
+ batches_accepted |        first_ingested         |         last_ingested         |      span       | certs_used | last_seq
+------------------+-------------------------------+-------------------------------+-----------------+------------+----------
+             7787 | 2026-11-16 23:57:55.450106+00 | 2026-11-17 02:10:39.702642+00 | 02:12:44.252536 |         80 |     7787
+
+ renewals | min_issue_to_activation | max_issue_to_activation | median_ms
+----------+-------------------------+-------------------------+-----------
+       79 | 00:00:00.018328         | 00:00:00.052463         |    33.066
+
+     min_gap     |     max_gap     |     avg_gap
+-----------------+-----------------+-----------------
+ 00:01:39.101682 | 00:01:40.669233 | 00:01:40.046833
+```
+
+7,787 batches were accepted over 2 h 12 min 44 s. That is every batch the simulator sent before the sleep: its log shows
+`SENT seq=1` to `seq=7787` with `status=200`. The 7,787 batches used 80 certificates, linked by 79 renewals issued 1 min
+39.1 s to 1 min 40.7 s apart (the 2/3 rule on a 3-minute life). Issuance to activation took 18 to 52 ms, with a median
+of 33 ms. `last_ingested` is earlier than the last batch's `measured_at` (02:10:53.28) because of the clock skew
+described below.
+
+### What happened at sleep
+
+The macOS power log shows `Entering Sleep state due to 'Clamshell Sleep'` at 21:10:18 EST (02:10:18Z), short dark wakes,
+and then sleep from 21:10:52 to 21:15:38. The current leaf `7BDA31EE…` had been activated at 02:09:30.64 with
+`not_after` 02:12:30, so it expired with no successor while the machine slept. Renewal would have been due at 02:10:50,
+which fell inside the sleep. After wake, the simulator's next batch was refused by the per-request check:
+
+```
+SENT seq=7788 batch=0ce40838 status=403 rtt_ms=14 measured_at=2026-11-17T02:11:53.280218Z scenario=resting
+REJECTED cert_expired serial=7BDA31EE19F6EA0B1022CA60C721708878CC2EC
+```
+
+and it exited 4, as designed: an expired leaf cannot renew itself.
+
+### The sweep fix
+
+The Phase 8 sweep already selected ACTIVE, ISSUED_PENDING_USE and RENEWED rows. What looked like a gap was a clock
+skew. The server log shows that the first sweep after wake expired only the older leaf:
+
+```
+21:15:51.990 RenewalSweepers : Certificate 7accdce9dc50… of dev_renew_001 EXPIRED (not_after 2026-11-17T02:10:50Z)
+21:15:52.574 HikariPool : Thread starvation or clock leap detected (housekeeper delta=5m27s457ms).
+21:16:21.982 RenewalSweepers : Certificate 7bda31eee19f… of dev_renew_001 EXPIRED (not_after 2026-11-17T02:12:30Z)
+```
+
+The sweep compared `not_after <= NOW()`, and `NOW()` is the clock of the Docker VM that runs Postgres. That clock
+stops while the Mac sleeps and catches up afterwards. Here is `ingested_at` (Postgres `NOW()`) minus `transmitted_at`
+(the simulator, host clock) for the last batches before the sleep:
+
+```
+ sequence_number |        transmitted_at         |          ingested_at          | skew_s
+            7778 | 2026-11-17 02:10:30.568937+00 | 2026-11-17 02:10:30.575533+00 |   0.01
+            7779 | 2026-11-17 02:10:45.165357+00 | 2026-11-17 02:10:31.589458+00 | -13.58
+            7787 | 2026-11-17 02:10:53.281063+00 | 2026-11-17 02:10:39.702642+00 | -13.58
+```
+
+The VM lost 13.6 s in a 16 s dark-wake cycle. After the 286 s sleep it was further behind, so for one tick `NOW()` was
+before 02:12:30 while the server clock was 02:15:51. The handshake and the per-request check read the JVM clock (the
+host clock), so they refused the leaf correctly. Only the stored status was late, by one tick.
+
+Phase 8.1 changes (DECISIONS 87):
+- the sweep compares `not_after` with `clock.instant()` from the server, the same clock as the handshake and the
+  per-request check;
+- each certificate gets its own transaction: devices FOR UPDATE, then the certificate FOR UPDATE, re-checked;
+  deny-listed from `not_after` before commit; EXPIRED; sockets evicted after commit (lock order DECISIONS 82);
+- one INFO line per certificate, with the OpenSSL serial and the previous status, for example
+  `Certificate 7608AD635108DF0D38A18941AE5F10CD53893381 of dev_active_exp EXPIRED (was ACTIVE, not_after
+  2026-11-18T21:02:43Z)`;
+- the sweep also runs inside the DENY_LIST_SEEDED boot step, before LISTENERS_BOUND;
+- the overview sets `needs_attention: "CERT_EXPIRED_NO_SUCCESSOR"` when the newest certificate is EXPIRED and there is
+  no ACTIVE or pending one. The dashboard shows it as an amber chip with "Device must re-enroll (Protocol C) or be
+  re-provisioned".
+
+`ExpiredSweeperIT` now starts its context by hand (leaf TTL PT80S, which lives about 20 s, since PT20S would be born
+expired under the 60 s backdate) and stops the periodic sweep, so every sweep in the test is an explicit call:
+
+| Test | Proves |
+|---|---|
+| `sweepDoesNotTouchValidCerts` | a valid ACTIVE leaf is not swept, not deny-listed, still answers 200 |
+| `pendingCertExpiresUnused` | an ISSUED_PENDING_USE leaf past `not_after` becomes EXPIRED; the ACTIVE one stays |
+| `renewedCertExpires` | a RENEWED leaf past `not_after` becomes EXPIRED; its successor stays ACTIVE |
+| `certPastNotAfterBecomesExpiredAndDenied` | the Phase 8 case: deny-list entry with reason EXPIRED, handshake refused |
+| `activeCertExpiresWithoutSuccessor` | a real X.509 expiry: after not_after the socket is still open and the row ACTIVE; one sweep makes it EXPIRED and closes the socket with nothing sent on it; the handshake is refused; the overview shows EXPIRED and CERT_EXPIRED_NO_SUCCESSOR |
+| `expiredWhileServerDown` | `not_after` set in the past while the context is closed; on restart the row is ACTIVE at TRUST_ANCHORS_LOADED and EXPIRED at DENY_LIST_SEEDED and LISTENERS_BOUND |
+
+### Why measured_at did not jump
+
+The rejected batch says `measured_at=02:11:53.28`, exactly 60 s after the previous batch, although about 5 minutes of
+wall-clock time had passed. The compressed clock is `min(max(last + 60 s, now - 12 h), now)` (DECISIONS 74). After
+about 12 minutes of streaming it catches up with now and is capped there, so during the soak batches were stamped about
+1 s apart. After the stall the cap no longer applied, and the step was the plain `last + 60 s`. A wall-clock stall
+therefore shows in `measured_at` as one 60 s step, never as its real length. It shows in `ingested_at`, which is why
+quarantine selects on `ingested_at` OR `measured_at` (DECISIONS 88). This is intended: `measured_at` is clinical time,
+and the gap was not measured.
+
+
+### The ConcurrentDuplicateIT timeouts, again
+
+The first full `./gradlew integrationTest` of Phase 8.1 failed two ConcurrentDuplicateIT tests with
+`java.net.SocketTimeoutException: Read timed out`, the same symptom as in Phase 7 and Phase 8. Run on its own, the
+class passed. The console showed why: 49 `expired-cert sweep failed: ... CannotGetJdbcConnectionException` warnings
+from 28 sweep threads, plus `HikariPool-44 - Failed to validate connection ... (This connection has been closed.)` on
+`boundedElastic` threads. Spring caches every test context, and each integration class has its own Postgres
+container, so a finished class leaves a live context pointed at a stopped database. Its periodic jobs (deny-list
+refresh, KMS health, CRL watch) then each hold a shared `boundedElastic` thread for Hikari's 30 s connection timeout,
+and live ingest work waits behind them. Phase 8 moved only the sweeper to its own scheduler.
+
+The fix is in `server/build.gradle`: `spring.test.context.cache.maxSize=1` for every test task. No context is ever
+reused by another class here (each has its own container and ports), so the cache only ever held dead contexts. With
+the cap, a context is closed as soon as the next class starts its own. The rerun passed 194 of 194 tests with no
+dead-context warnings, in 2 min 7 s instead of 3 min 21 s.
