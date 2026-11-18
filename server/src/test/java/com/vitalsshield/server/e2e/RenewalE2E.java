@@ -69,6 +69,9 @@ class RenewalE2E {
         registry.add("vitalsshield.pki.trust-file", () -> dir.resolve("root-ca.pem").toString());
         registry.add("vitalsshield.pki.leaf-ttl", () -> "PT2M");
         registry.add("vitalsshield.pki.renewal-grace", () -> "PT3S");
+        // This test presents every old certificate long after its grace, on purpose, to prove the handshake refuses
+        // it. That is exactly what the post-drain trap (DECISIONS #94) treats as a clone; PostDrainTrapIT covers it.
+        registry.add("vitalsshield.anomaly.post-drain.enabled", () -> "false");
         ports = TestPorts.register(registry);
     }
 

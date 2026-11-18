@@ -78,6 +78,13 @@ public final class WebAuthnSteps {
         return (String) r.json().get("bootstrap_token");
     }
 
+    /** Step-up restore-active (spec Section 4 recovery path 1). */
+    public static AdminHttp.Response restore(AdminHttp http, SoftwareAuthenticator a, String deviceId) {
+        return ceremony(http, a, "/api/v1/admin/devices/" + deviceId + "/restore-active/begin", Map.of(),
+                "/api/v1/admin/devices/" + deviceId + "/restore-active/finish",
+                SoftwareAuthenticator.Variant.good(http.origin()));
+    }
+
     public static AdminHttp.Response quarantine(AdminHttp http, SoftwareAuthenticator a, String deviceId,
                                                 int lookback, String reason) {
         return ceremony(http, a, "/api/v1/admin/devices/" + deviceId + "/quarantine/begin",

@@ -17,7 +17,14 @@ import java.util.Map;
  * simulator scenario [--device-id X] --set S      (S: resting, exertion, drift, acute, low-perfusion-critical)
  * simulator reset-state [--device-id X] [--state-dir D]
  * simulator factory-wipe [--device-id X] [--state-dir D]
+ * simulator re-enroll [--device-id X] [--state-dir D]         Protocol C now (for example after a clinician restore)
+ * simulator clone --device-id X --to-state-dir D [--state-dir S]   copy keys/ and state/ (split-brain drill)
  * </pre>
+ * Every command accepts --state-dir (default simulator-state).
+ *
+ * <p>Exit codes: 0 done; 1 error; 2 usage; 3 refused (revoked, quarantined, or forbidden; never recovered
+ * automatically); 4 the certificate expired and Protocol C could not run (for example no DEK); 5 a clinician must act
+ * (re-enrollment answered REAUTH_REQUIRED, BOOT_EPOCH_INVALID, BOOT_EPOCH_REGRESSION or DEVICE_NOT_ACTIVE).
  */
 public final class SimulatorMain {
 
@@ -33,9 +40,11 @@ public final class SimulatorMain {
     /** Entry point usable in-process (tests). Returns the exit code. */
     public static int run(String[] args, PrintStream out, PrintStream err) {
         if (args.length == 0) {
-            err.println("usage: simulator <enroll|ping|run|scenario|reset-state|factory-wipe> [--device-id X] [--token T] "
-                    + "[--interval-ms MS] [--count N] [--scenario S] [--script S:N,...] [--set S] [--state-dir D] "
-                    + "[--trust-file F] [--public-url U] [--mtls-url U]");
+            err.println("usage: simulator <enroll|ping|run|scenario|reset-state|factory-wipe|re-enroll|clone> "
+                    + "[--device-id X] [--token T] [--interval-ms MS] [--count N] [--scenario S] [--script S:N,...] "
+                    + "[--set S] [--state-dir D] [--to-state-dir D] [--trust-file F] [--public-url U] [--mtls-url U]\n"
+                    + "exit codes: 0 ok, 1 error, 2 usage, 3 refused/revoked, 4 cert expired and unrecoverable, "
+                    + "5 REAUTH_REQUIRED (clinician action)");
             return 2;
         }
         Map<String, String> opts;
@@ -115,6 +124,20 @@ public final class SimulatorMain {
                 case "reset-state" -> {
                     sim.store().resetState();
                     out.println("STATE_RESET " + sim.store().deviceDir());
+                    return 0;
+                }
+                case "re-enroll" -> {
+                    Integer exit = sim.recoverByReEnroll(out, "manual");
+                    return exit == null ? 0 : exit;
+                }
+                case "clone" -> {
+                    String to = opts.get("to-state-dir");
+                    if (to == null) {
+                        err.println("clone needs --to-state-dir");
+                        return 2;
+                    }
+                    Path target = sim.store().cloneTo(Path.of(to));
+                    out.println("CLONED " + sim.store().deviceDir() + " -> " + target);
                     return 0;
                 }
                 case "factory-wipe" -> {

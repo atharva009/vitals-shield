@@ -27,3 +27,5 @@ Run through this before the demo slot. Later phases append to it.
       the demo PT4M leaves, any sleep longer than about 2 minutes expires the device's certificate and ends the stream
       (exit 4).
 - [ ] Do not leave a PT4M device streaming unattended; use the default 12 h profile for long runs.
+- [ ] Phase 9 (DECISIONS 98): after any laptop sleep, check the dashboard's clock skew tile, and restart Docker Desktop
+      if it is amber (above 2 s) or red (above 10 s).

@@ -138,6 +138,14 @@ public class SignerRevocationService {
                         .forEach(crls::revocationCommitted));
     }
 
+    /**
+     * Records a revocation committed by another service (the anomaly response, Protocol C supersession), so the
+     * dashboard's revocation log shows every revocation made in this process.
+     */
+    public void recordCommitted(RevocationResult r) {
+        remember(r);
+    }
+
     /** Most recent results, newest first (at most 50). */
     public List<RevocationResult> recentResults() {
         return new ArrayList<>(recent);

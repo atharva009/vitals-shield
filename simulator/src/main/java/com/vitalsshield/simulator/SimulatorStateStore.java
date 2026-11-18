@@ -165,6 +165,54 @@ public final class SimulatorStateStore {
         writeAtomic(stateFile(), state.toJson(), false);
     }
 
+    /** The DEK, if the key partition has one (Protocol C never creates a new one: the server would not know it). */
+    public Optional<KeyPair> loadDek() {
+        if (!Files.exists(dekKeyFile())) {
+            return Optional.empty();
+        }
+        PrivateKey key = EcKeys.fromPkcs8Pem(read(dekKeyFile()));
+        return Optional.of(new KeyPair(DekPublic.derive(key), key));
+    }
+
+    /**
+     * Protocol C (DECISIONS #95): the new key and certificate replace the current ones (atomic renames, key first),
+     * any pending pair is discarded, and the assigned boot_epoch and assignment are stored. The sequence number and
+     * last measured_at are kept: streaming continues where it stopped.
+     */
+    public void saveReEnrollment(PrivateKey olkKey, String certPem, long bootEpoch, String assignmentId,
+                                 String assignmentActiveFrom) {
+        SimulatorState s = SimulatorState.fromJson(read(stateFile()));
+        discardPending();
+        writeAtomic(olkKeyFile(), EcKeys.toPkcs8Pem(olkKey), true);
+        writeAtomic(olkCertFile(), certPem, false);
+        writeAtomic(stateFile(), new SimulatorState(s.deviceId(), bootEpoch, s.sequenceNumber(), assignmentId,
+                assignmentActiveFrom, s.enrolledAt(), s.lastMeasuredAt()).toJson(), false);
+    }
+
+    /**
+     * Copies this device's whole directory (keys/ and state/, and the scenario file) to the same device id under
+     * {@code targetRoot}: an exact clone of the device's flash, for the split-brain drill.
+     */
+    public Path cloneTo(Path targetRoot) {
+        Path target = targetRoot.resolve(deviceDir.getFileName());
+        if (Files.exists(target)) {
+            throw new IllegalStateException("clone target already exists: " + target);
+        }
+        try (Stream<Path> walk = Files.walk(deviceDir)) {
+            for (Path src : walk.sorted().toList()) {
+                Path dst = target.resolve(deviceDir.relativize(src).toString());
+                if (Files.isDirectory(src)) {
+                    Files.createDirectories(dst);
+                } else {
+                    Files.copy(src, dst, StandardCopyOption.COPY_ATTRIBUTES);
+                }
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException("cannot clone " + deviceDir + " to " + target, e);
+        }
+        return target;
+    }
+
     /** Persists sequence_number + 1 before the caller uses it, so a crash can never reuse a number. */
     public long incrementSequence() {
         SimulatorState s = SimulatorState.fromJson(read(stateFile()));

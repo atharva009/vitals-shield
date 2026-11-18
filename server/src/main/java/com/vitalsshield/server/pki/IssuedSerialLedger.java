@@ -23,6 +23,13 @@ public class IssuedSerialLedger {
 
     private final JdbcTemplate jdbc;
     private final SerialAllocator allocator;
+    private java.time.Clock clock = java.time.Clock.systemUTC();
+
+    /** The server's JVM clock for voided_at (DECISIONS #89). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setClock(java.time.Clock clock) {
+        this.clock = clock;
+    }
 
     public IssuedSerialLedger(JdbcTemplate jdbc, SerialAllocator allocator) {
         this.jdbc = jdbc;
@@ -73,10 +80,13 @@ public class IssuedSerialLedger {
     /** Voids every RESERVED serial older than 2 minutes; returns what it voided (for the deny-list). */
     public List<CertKey> sweepStale() {
         return jdbc.query("""
-                UPDATE issued_serials SET status = 'VOIDED', voided_at = NOW()
+                UPDATE issued_serials SET status = 'VOIDED', voided_at = ?
                  WHERE status = 'RESERVED' AND reserved_at < NOW() - INTERVAL '2 minutes'
                 RETURNING issuer_key_hash, serial_number
-                """, (rs, i) -> CertKey.of(rs.getString("issuer_key_hash"), rs.getString("serial_number")));
+                """, (rs, i) -> CertKey.of(rs.getString("issuer_key_hash"), rs.getString("serial_number")),
+                // voided_at becomes a deny-list deniedFrom, compared with the JVM clock; reserved_at is Postgres-stamped
+                // and stays compared with NOW() (DECISIONS #89).
+                java.sql.Timestamp.from(clock.instant()));
     }
 
     /** Hierarchy rebuild: every RESERVED serial belongs to an issuer that is about to be revoked. */

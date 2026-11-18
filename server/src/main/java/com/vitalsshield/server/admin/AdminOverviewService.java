@@ -56,6 +56,7 @@ public class AdminOverviewService {
     private final Clock clock;
     private final ClinicalProperties clinical;
     private final CertificateActivationService activation;
+    private final com.vitalsshield.server.clock.ClockSkewMonitor clockSkew;
     private final Map<String, CachedVerdict> dekCache = new ConcurrentHashMap<>();
 
     public AdminOverviewService(JdbcTemplate jdbc, BootStatusTracker boot, KmsHealthMonitor kms,
@@ -63,7 +64,9 @@ public class AdminOverviewService {
                                 CertificateDenyList denyList, TelemetryMetrics telemetry, IssuedSerialLedger ledger,
                                 SignerRevocationService revocations, QuarantineService quarantines,
                                 DekAnchorVerifier anchors, Clock clock, ClinicalProperties clinical,
-                                CertificateActivationService activation) {
+                                CertificateActivationService activation,
+                                com.vitalsshield.server.clock.ClockSkewMonitor clockSkew) {
+        this.clockSkew = clockSkew;
         this.clinical = clinical;
         this.activation = activation;
         this.jdbc = jdbc;
@@ -84,6 +87,15 @@ public class AdminOverviewService {
     public Map<String, Object> snapshot() {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("server_time", clock.instant().toString());
+        // DECISIONS #89: relative times of Postgres-stamped columns (ingested_at, last_ingested_at) use db_time.
+        out.put("db_time", jdbc.queryForObject("SELECT now()", Timestamp.class).toInstant().toString());
+        com.vitalsshield.server.clock.ClockSkewMonitor.Snapshot skew = clockSkew.snapshot();
+        Map<String, Object> clockMap = new LinkedHashMap<>();
+        clockMap.put("skew_ms", skew.skewMs());
+        clockMap.put("checked_at", skew.checkedAt() == null ? null : skew.checkedAt().toString());
+        clockMap.put("state", skew.state().name());
+        clockMap.put("error", skew.error());
+        out.put("clock", clockMap);
         out.put("boot_steps", boot.completed().stream()
                 .map(s -> Map.of("step", s.step().name(), "at", s.completedAt().toString())).toList());
         out.put("kms", kms());
@@ -396,6 +408,7 @@ public class AdminOverviewService {
                 m.put("active_cert", null);
             }
             m.put("pending_cert", lifecycleCert(id, "ISSUED_PENDING_USE"));
+            m.put("anomaly", "REAUTH_REQUIRED".equals(rs.getString("ts")) ? latestAnomaly(id) : null);
             m.put("renewed_cert", lifecycleCert(id, "RENEWED"));
             m.put("live_sockets", liveByDevice.getOrDefault(id, 0));
             // DECISIONS #77: the certificate was revoked but the quarantine transaction did not commit.
@@ -405,6 +418,23 @@ public class AdminOverviewService {
             out.add(m);
         });
         return out;
+    }
+
+    /** DECISIONS #92: the newest SECURITY_ANOMALY_ALERT of a REAUTH_REQUIRED device, for the recovery panel. */
+    private Map<String, Object> latestAnomaly(String deviceId) {
+        List<Map<String, Object>> rows = jdbc.query("""
+                SELECT alert_id::text AS alert_id, condition_code, explanation_summary, created_at FROM clinical_alerts
+                 WHERE device_id = ? AND alert_type = 'SECURITY_ANOMALY_ALERT'
+                 ORDER BY created_at DESC LIMIT 1
+                """, (r, i) -> {
+            Map<String, Object> a = new LinkedHashMap<>();
+            a.put("alert_id", r.getString("alert_id"));
+            a.put("condition_code", r.getString("condition_code"));
+            a.put("explanation", r.getString("explanation_summary"));
+            a.put("created_at", r.getTimestamp("created_at").toInstant().toString());
+            return a;
+        }, deviceId);
+        return rows.isEmpty() ? null : rows.get(0);
     }
 
     /** DECISIONS #83: renewal is due at not_before + 2/3 of the validity period. */
@@ -442,15 +472,20 @@ public class AdminOverviewService {
         return jdbc.query("""
                 SELECT n.device_id, n.serial_number AS new_serial, n.issuer_key_hash AS new_issuer, n.issued_at,
                        n.activated_at, n.status::text AS new_status, n.revocation_reason AS new_reason,
+                       n.issued_via, n.reenroll_reason,
                        o.serial_number AS old_serial, o.issuer_key_hash AS old_issuer, o.grace_expires_at,
                        o.status::text AS old_status
                   FROM certificates n
                   LEFT JOIN certificates o ON o.device_id = n.device_id AND o.serial_number = n.superseded_serial
                  WHERE n.superseded_serial IS NOT NULL
+                    OR (n.issued_via = 'REENROLL' AND n.reenroll_reason IS NOT NULL)
                  ORDER BY n.issued_at DESC LIMIT ?
                 """, (rs, i) -> {
             Map<String, Object> r = new LinkedHashMap<>();
             r.put("device_id", rs.getString("device_id"));
+            // Protocol C rows (DECISIONS #95): "RE-ENROLLED via DEK" with the server-derived reason.
+            r.put("kind", "REENROLL".equals(rs.getString("issued_via")) ? "REENROLL" : "RENEW");
+            r.put("reenroll_reason", rs.getString("reenroll_reason"));
             String oldSerial = rs.getString("old_serial");
             r.put("old_serial_display", oldSerial == null ? null : SerialDisplayFormat.toOpenSslHex(oldSerial));
             r.put("new_serial_display", SerialDisplayFormat.toOpenSslHex(rs.getString("new_serial")));

@@ -233,8 +233,10 @@ public class QuarantineService {
                     UPDATE device_bootstrap_tokens SET status = 'REVOKED'
                      WHERE device_id = :d AND status IN ('ISSUED', 'CLAIMING')
                     """, d);
-            // d) Spec Section 6, a separate statement with its own (later) snapshot.
-            Instant quarantineTs = clock.instant();
+            // d) Spec Section 6, a separate statement with its own (later) snapshot. :quarantineTs is Postgres now()
+            // read in this transaction (DECISIONS #89): the window is compared with ingested_at, which Postgres
+            // stamped, so a Docker VM clock behind or ahead of the JVM cannot shift which batches are sanitized.
+            Instant quarantineTs = jdbc.queryForObject("SELECT now()", Map.of(), java.sql.Timestamp.class).toInstant();
             Map<String, Object> counts = jdbc.queryForMap(SANITIZE_WITH_COUNTS, new MapSqlParameterSource()
                     .addValue("deviceId", deviceId)
                     // Typed as timestamptz: an untyped Timestamp makes ":quarantineTs - interval" resolve to an interval.

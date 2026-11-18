@@ -43,11 +43,18 @@ public class DynamicMtlsTrustManager extends X509ExtendedTrustManager {
     private final TrustAnchorSource anchors;
     private final CertificateDenyList denyList;
     private final Clock clock;
+    private volatile SupersededUseRecorder supersededUse = SupersededUseRecorder.NONE;
 
     public DynamicMtlsTrustManager(TrustAnchorSource anchors, CertificateDenyList denyList, Clock clock) {
         this.anchors = anchors;
         this.denyList = denyList;
         this.clock = clock;
+    }
+
+    /** DECISIONS #94: the post-drain trap (optional; unit tests construct this class without it). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setSupersededUseRecorder(SupersededUseRecorder recorder) {
+        this.supersededUse = recorder == null ? SupersededUseRecorder.NONE : recorder;
     }
 
     @Override
@@ -131,6 +138,9 @@ public class DynamicMtlsTrustManager extends X509ExtendedTrustManager {
         // 4. Deny-list.
         CertKey key = CertKey.from(leaf);
         if (denyList.isDenied(key, now)) {
+            // A RENEWED certificate after its grace: report it to the post-drain trap (in-memory queue offer only).
+            denyList.entry(key).filter(e -> "SUPERSEDED".equals(e.reason()))
+                    .ifPresent(e -> supersededUse.recordSupersededUse(key, now));
             // Cause with reason REVOKED, so JSSE can send certificate_revoked (44) where it supports it (DECISIONS #37).
             throw reject("certificate is deny-listed", key.serial(), key.issuerKeyHash(),
                     new CertPathValidatorException("certificate is revoked", null, null, -1,

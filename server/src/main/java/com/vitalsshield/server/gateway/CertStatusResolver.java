@@ -35,6 +35,14 @@ public class CertStatusResolver implements WebFilter, Ordered {
     private final CertificateDenyList denyList;
     private final JdbcTemplate jdbc;
     private final Clock clock;
+    private volatile com.vitalsshield.server.pki.trust.SupersededUseRecorder supersededUse =
+            com.vitalsshield.server.pki.trust.SupersededUseRecorder.NONE;
+
+    /** DECISIONS #94: the post-drain trap. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setSupersededUseRecorder(com.vitalsshield.server.pki.trust.SupersededUseRecorder recorder) {
+        this.supersededUse = recorder == null ? com.vitalsshield.server.pki.trust.SupersededUseRecorder.NONE : recorder;
+    }
 
     public CertStatusResolver(ListenerProperties listeners, CertificateDenyList denyList, JdbcTemplate jdbc,
                               Clock clock) {
@@ -74,6 +82,9 @@ public class CertStatusResolver implements WebFilter, Ordered {
         Instant now = clock.instant();
         var denied = denyList.entry(key).filter(e -> !now.isBefore(e.deniedFrom()));
         if (denied.isPresent()) {
+            if ("SUPERSEDED".equals(denied.get().reason())) {
+                supersededUse.recordSupersededUse(key, now);
+            }
             return reject(exchange, denied.get().reason());
         }
 
@@ -83,6 +94,9 @@ public class CertStatusResolver implements WebFilter, Ordered {
                 .flatMap(rows -> {
                     String verdict = verdict(rows, now);
                     if (verdict != null) {
+                        if ("SUPERSEDED".equals(verdict)) {
+                            supersededUse.recordSupersededUse(k, now);
+                        }
                         return reject(exchange, verdict);
                     }
                     Row row = rows.get(0);

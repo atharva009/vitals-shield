@@ -1,6 +1,8 @@
 .env
 var/
 simulator-state/
+# Phase 9 split-brain drill: simulator clone --to-state-dir simulator-state-clone
+simulator-state-clone/
 build/
 .gradle/
 node_modules/

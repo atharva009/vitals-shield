@@ -296,6 +296,12 @@ export default function Page() {
     return ms(overview.server_time)! + (now - lastOk);
   }, [overview, now, lastOk]);
 
+  const dbNow = useMemo(() => {
+    // DECISIONS #89: ingested_at and last_ingested_at are stamped by Postgres, so they are compared with its clock.
+    if (!overview) return now;
+    return ms(overview.db_time)! + (now - lastOk);
+  }, [overview, now, lastOk]);
+
   const device = overview?.devices.find((d) => d.device_id === selected) ?? null;
 
   const quarantine = async () => {
@@ -451,6 +457,24 @@ export default function Page() {
             recorded / voided{o && o.ledger.invariant_violations > 0 ? ` · ${o.ledger.invariant_violations} VIOLATIONS` : ""}
           </div>
         </div>
+        <div
+          className={`${s.tile} ${o?.clock.state === "RED" ? s.tileDanger : o?.clock.state === "AMBER" ? s.tileWarn : ""}`}
+          data-testid="clock-skew"
+          title="DECISIONS #98: Postgres clock_timestamp() minus the JVM clock, checked every 60 s. Amber above 2 s, red above 10 s: after a laptop sleep, restart Docker Desktop."
+        >
+          <div className={s.tileLabel}>Clock skew (DB vs server)</div>
+          <Flash value={o?.clock.skew_ms} className={s.tileValue}>
+            {o ? (o.clock.skew_ms === null ? "?" : `${o.clock.skew_ms > 0 ? "+" : ""}${o.clock.skew_ms} ms`) : "…"}
+          </Flash>
+          <div className={s.tileSub}>
+            {o ? (
+              <span className={`${s.chip} ${o.clock.state === "GREEN" ? s.chipOk : o.clock.state === "AMBER" ? s.chipWarn : o.clock.state === "RED" ? s.chipDanger : s.chipMuted}`} data-testid="clock-skew-state">
+                {o.clock.state}
+              </span>
+            ) : null}
+            {o?.clock.checked_at ? ` checked ${time(o.clock.checked_at)}` : ""}
+          </div>
+        </div>
       </section>
 
       <section className={s.panel}>
@@ -535,7 +559,7 @@ export default function Page() {
                 <td className={s.num}>
                   <Flash value={d.last_sequence_num}>{d.last_sequence_num}</Flash>
                 </td>
-                <td>{ago(d.last_ingested_at, serverNow)}</td>
+                <td>{ago(d.last_ingested_at, dbNow)}</td>
                 <td className={s.mono}>
                   {d.active_cert ? (
                     <>
@@ -581,11 +605,6 @@ export default function Page() {
             <h2>
               {device.device_id} {device.dev_seed && <span className={s.badge}>DEV SEED</span>}
             </h2>
-            {code === SESSION && device.trust_state === "REAUTH_REQUIRED" && (
-              <button className={s.primary} disabled={busy} onClick={() => void restore(device.device_id)}>
-                {busy ? "Waiting for Touch ID…" : "Restore"}
-              </button>
-            )}
             <button
               className={s.danger}
               disabled={device.trust_state !== "ACTIVE" && device.trust_state !== "REAUTH_REQUIRED"}
@@ -597,6 +616,44 @@ export default function Page() {
               Quarantine
             </button>
           </div>
+          {device.trust_state === "REAUTH_REQUIRED" && (
+            <div className={s.reauth} data-testid="reauth-panel">
+              <div>
+                <span className={`${s.chip} ${s.chipDanger}`}>REAUTH_REQUIRED</span>{" "}
+                {device.anomaly ? (
+                  <span className={`${s.mono} ${s.code}`} data-testid="reauth-condition">{device.anomaly.condition_code}</span>
+                ) : null}
+              </div>
+              <p className={s.reauthText}>
+                {device.anomaly
+                  ? device.anomaly.explanation.replace(/([^.!?])$/, "$1.")
+                  : "A split-brain trap fired for this device."}{" "}
+                Every certificate was revoked and telemetry is untouched. Decide which it is:
+              </p>
+              <div className={s.reauthActions}>
+                <button
+                  className={s.primary}
+                  disabled={busy || code !== SESSION}
+                  title={code === SESSION ? "Passkey step-up: trust_state ACTIVE and epoch_resync_allowed, so the device can re-enroll with a new epoch" : "Needs a passkey session"}
+                  onClick={() => void restore(device.device_id)}
+                  data-testid="reauth-restore"
+                >
+                  {busy ? "Waiting for Touch ID…" : "Restore (benign reset)"}
+                </button>
+                <button
+                  className={s.danger}
+                  disabled={busy}
+                  onClick={() => {
+                    setActionError(null);
+                    setConfirmOpen(true);
+                  }}
+                  data-testid="reauth-quarantine"
+                >
+                  Quarantine (confirmed compromise)
+                </button>
+              </div>
+            </div>
+          )}
           <div className={s.certGrid} data-testid="cert-card">
             <div>
               <div className={s.muted}>Current certificate</div>
@@ -780,7 +837,7 @@ export default function Page() {
                   <td className={s.num}>{r.perfusion_index.toFixed(2)}</td>
                   <td className={s.num}>{r.z ? `${z(r.z.hr)} / ${z(r.z.hrv)} / ${z(r.z.spo2)}` : "–"}</td>
                   <td>{time(r.measured_at)}</td>
-                  <td>{ago(r.ingested_at, serverNow)}</td>
+                  <td>{ago(r.ingested_at, dbNow)}</td>
                 </tr>
               ))}
             </tbody>
@@ -831,6 +888,7 @@ export default function Page() {
 
       <section className={s.panel}>
         <h2>Renewal log</h2>
+        <p className={s.muted}>Protocol B renewals and Protocol C re-enrollments, newest first.</p>
         <table className={s.table} data-testid="renewal-log">
           <thead>
             <tr>
@@ -846,7 +904,14 @@ export default function Page() {
             {o?.renewals.map((r) => (
               <tr key={r.new_serial_display}>
                 <td>{r.device_id}</td>
-                <td className={s.mono} title={r.old_serial_display ?? ""}>{short(r.old_serial_display ?? "–", 16)}</td>
+                {r.kind === "REENROLL" ? (
+                  <td data-testid="renewal-reenroll">
+                    <span className={`${s.chip} ${s.chipWarn}`}>RE-ENROLLED via DEK</span>{" "}
+                    <span className={s.muted}>{r.reenroll_reason}</span>
+                  </td>
+                ) : (
+                  <td className={s.mono} title={r.old_serial_display ?? ""}>{short(r.old_serial_display ?? "–", 16)}</td>
+                )}
                 <td className={s.mono} title={r.new_serial_display}>
                   {short(r.new_serial_display, 16)}
                   {r.new_status === "REVOKED" && (

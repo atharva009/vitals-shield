@@ -12,6 +12,7 @@ class CrlReasonMappingTest {
     @ParameterizedTest
     @CsvSource({
             "KEY_COMPROMISE, 1",
+            "SUSPECTED_CLONE, 1",
             "CA_COMPROMISE, 2",
             "SUPERSEDED_BY_REPROVISION, 4",
             "SUPERSEDED_BY_REENROLL, 4",

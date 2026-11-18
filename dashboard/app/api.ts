@@ -34,6 +34,8 @@ export type Device = {
   /** Protocol B: superseded, accepted until grace_expires_at. */
   renewed_cert: LifecycleCert | null;
   live_sockets: number;
+  /** DECISIONS #92: the newest SECURITY_ANOMALY_ALERT, set while the device is REAUTH_REQUIRED. */
+  anomaly: { alert_id: string; condition_code: string; explanation: string; created_at: string } | null;
   /**
    * DECISIONS #77: certificate revoked but the quarantine transaction did not commit.
    * DECISIONS #87: newest certificate EXPIRED with no ACTIVE or pending successor.
@@ -52,6 +54,10 @@ export type LifecycleCert = {
 /** One Protocol B renewal (GET /api/v1/admin/overview renewals[], newest first). */
 export type Renewal = {
   device_id: string;
+  /** RENEW (Protocol B) or REENROLL (Protocol C, "RE-ENROLLED via DEK"). */
+  kind: "RENEW" | "REENROLL";
+  /** Protocol C only: cert_expired, epoch_resync or no_usable_cert. */
+  reenroll_reason: string | null;
   old_serial_display: string | null;
   new_serial_display: string;
   new_status: string;
@@ -134,6 +140,10 @@ export type Audit = { chain_valid: boolean; first_broken_sequence_id: number | n
 
 export type Overview = {
   server_time: string;
+  /** Postgres now(): relative times of Postgres-stamped columns use it (DECISIONS #89). */
+  db_time: string;
+  /** DECISIONS #98: Postgres clock_timestamp() minus the JVM clock. */
+  clock: { skew_ms: number | null; checked_at: string | null; state: "UNKNOWN" | "GREEN" | "AMBER" | "RED"; error: string | null };
   boot_steps: { step: string; at: string }[];
   kms: { healthy: boolean; state: "HEALTHY" | "UNHEALTHY" | "UNKNOWN"; keys: KmsKey[] };
   ca: { root?: CaEntry; device_intermediate?: CaEntry; server_tls_ca?: CaEntry };

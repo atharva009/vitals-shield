@@ -167,6 +167,46 @@ class SimulatorStateStoreTest {
     }
 
     @Test
+    void reEnrollmentReplacesKeyAndEpochButKeepsSequenceAndMeasuredAt() throws IOException {
+        SimulatorStateStore store = new SimulatorStateStore(root, "dev_c");
+        store.loadOrCreateDek();
+        store.saveEnrollment(EcKeys.generateP256().getPrivate(), CERT_PEM, state(0));
+        store.nextBatch(java.time.Instant.parse("2026-11-18T12:00:00Z"));
+        store.nextBatch(java.time.Instant.parse("2026-11-18T12:00:01Z"));
+        store.savePending(EcKeys.generateP256().getPrivate(), CERT_PEM);
+        String measuredBefore = store.load().orElseThrow().state().lastMeasuredAt();
+
+        KeyPair fresh = EcKeys.generateP256();
+        store.saveReEnrollment(fresh.getPrivate(), CERT_PEM, 4, "a2", "2026-11-18T12:00:00Z");
+        SimulatorState st = store.load().orElseThrow().state();
+        assertThat(st.bootEpoch()).isEqualTo(4);
+        assertThat(st.sequenceNumber()).as("persisted sequence kept").isEqualTo(2);
+        assertThat(st.lastMeasuredAt()).isEqualTo(measuredBefore);
+        assertThat(st.assignmentId()).isEqualTo("a2");
+        assertThat(store.load().orElseThrow().olkKey().getEncoded()).isEqualTo(fresh.getPrivate().getEncoded());
+        assertThat(store.loadPending()).as("pending discarded").isEmpty();
+        assertThat(store.loadDek()).isPresent();
+    }
+
+    @Test
+    void cloneCopiesBothPartitionsExactly() throws IOException {
+        SimulatorStateStore store = new SimulatorStateStore(root.resolve("a"), "dev_x");
+        KeyPair dek = store.loadOrCreateDek();
+        store.saveEnrollment(EcKeys.generateP256().getPrivate(), CERT_PEM, state(7));
+        Path target = store.cloneTo(root.resolve("b"));
+        SimulatorStateStore copy = new SimulatorStateStore(root.resolve("b"), "dev_x");
+        assertThat(target).isEqualTo(copy.deviceDir());
+        assertThat(copy.loadDek().orElseThrow().getPublic()).isEqualTo(dek.getPublic());
+        assertThat(copy.load().orElseThrow().state()).isEqualTo(store.load().orElseThrow().state());
+        assertThat(Files.readString(copy.olkKeyFile())).isEqualTo(Files.readString(store.olkKeyFile()));
+        if (SimulatorStateStore.posix()) {
+            assertThat(Files.getPosixFilePermissions(copy.dekKeyFile())).isEqualTo(SimulatorStateStore.OWNER_RW);
+        }
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> store.cloneTo(root.resolve("b")))
+                .hasMessageContaining("already exists");
+    }
+
+    @Test
     void interruptedPromotionIsFinishedOnLoad() throws IOException {
         SimulatorStateStore store = new SimulatorStateStore(root, "dev_q");
         store.saveEnrollment(EcKeys.generateP256().getPrivate(), CERT_PEM, state(0));

@@ -222,6 +222,127 @@ public final class Simulator {
                 r.headers().firstValue("Retry-After").map(Long::parseLong).orElse(null));
     }
 
+    /** Protocol C outcome (DECISIONS #95). */
+    public sealed interface ReEnrollOutcome {
+        record ReEnrolled(X509Certificate cert, long bootEpoch, long previousEpoch) implements ReEnrollOutcome {
+        }
+
+        /** 409 REAUTH_REQUIRED, BOOT_EPOCH_INVALID, BOOT_EPOCH_REGRESSION, or 403 DEVICE_NOT_ACTIVE: exit 5. */
+        record Reauth(int status, String code) implements ReEnrollOutcome {
+        }
+
+        record Failed(int status, String code, Long retryAfterSeconds) implements ReEnrollOutcome {
+        }
+    }
+
+    /** Re-enrollment answers that mean a clinician has to act (exit 5). */
+    static final java.util.Set<String> REAUTH_CODES = java.util.Set.of("REAUTH_REQUIRED", "BOOT_EPOCH_INVALID",
+            "BOOT_EPOCH_REGRESSION", "DEVICE_NOT_ACTIVE");
+
+    /**
+     * Protocol C over the public port (spec Section 4): GET /challenge?device_id=, a new OLK and CSR, the DEK signs
+     * (device_id, issued_at_ms, nonce, stored boot_epoch, sha256(csr)), POST /re-enroll. On 200 the new key, certificate,
+     * assigned epoch and assignment are persisted (atomic renames) before anything uses them.
+     */
+    public ReEnrollOutcome reEnroll() throws IOException, InterruptedException {
+        SimulatorStateStore.Enrollment e = store.load()
+                .orElseThrow(() -> new IllegalStateException("no device state: Protocol C needs the stored boot_epoch"));
+        Optional<KeyPair> dek = store.loadDek();
+        if (dek.isEmpty()) {
+            return new ReEnrollOutcome.Failed(0, "NO_DEK", null); // factory-wiped: only Protocol A can help
+        }
+        long epoch = e.state().bootEpoch();
+        try (GatewayClient pub = GatewayClient.publicClient(config.trustFile())) {
+            GatewayClient.Response ch = pub.get(config.publicUrl().resolve("/api/v1/devices/challenge?device_id="
+                    + java.net.URLEncoder.encode(config.deviceId(), java.nio.charset.StandardCharsets.UTF_8)));
+            if (ch.status() != 200) {
+                return reEnrollFailed(ch);
+            }
+            Map<String, Object> c = parse(ch.body());
+            KeyPair olk = EcKeys.generateP256();
+            byte[] csr = CsrFactory.create(olk, config.deviceId());
+            Map<String, Object> body = reEnrollBody(config.deviceId(), ((Number) c.get("issued_at_ms")).longValue(),
+                    Base64.getDecoder().decode((String) c.get("random_nonce_b64")), (String) c.get("hmac_tag_b64"),
+                    epoch, csr, dek.get().getPrivate());
+            GatewayClient.Response r = pub.postJson(config.publicUrl().resolve("/api/v1/devices/re-enroll"),
+                    JSONObjectUtils.toJSONString(body));
+            if (r.status() != 200) {
+                return reEnrollFailed(r);
+            }
+            Map<String, Object> json = parse(r.body());
+            String pem = (String) json.get("new_cert_pem");
+            long assigned = ((Number) json.get("assigned_boot_epoch")).longValue();
+            store.saveReEnrollment(olk.getPrivate(), pem, assigned, (String) json.get("current_assignment_id"),
+                    (String) json.get("assignment_active_from"));
+            return new ReEnrollOutcome.ReEnrolled(SimulatorStateStore.parseCert(pem), assigned, epoch);
+        }
+    }
+
+    /** The JSON body of POST /api/v1/devices/re-enroll; {@code dekKey} signs reEnrollProofBytes. */
+    public static Map<String, Object> reEnrollBody(String deviceId, long issuedAtMs, byte[] nonce, String hmacTagB64,
+                                                   long bootEpoch, byte[] csrDer, PrivateKey dekKey) {
+        byte[] proof = DerSignatures.sign(dekKey,
+                CanonicalEncodings.reEnrollProofBytes(deviceId, issuedAtMs, nonce, bootEpoch, csrDer));
+        Base64.Encoder b64 = Base64.getEncoder();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("device_id", deviceId);
+        body.put("issued_at_ms", issuedAtMs);
+        body.put("random_nonce_b64", b64.encodeToString(nonce));
+        body.put("hmac_tag_b64", hmacTagB64);
+        body.put("boot_epoch", bootEpoch);
+        body.put("olk_csr_der_b64", b64.encodeToString(csrDer));
+        body.put("dek_sig_b64", b64.encodeToString(proof));
+        return body;
+    }
+
+    private static ReEnrollOutcome reEnrollFailed(GatewayClient.Response r) {
+        RenewOutcome.Failed f = failed(r);
+        if ((r.status() == 409 || r.status() == 403) && REAUTH_CODES.contains(f.code())) {
+            return new ReEnrollOutcome.Reauth(r.status(), f.code());
+        }
+        return new ReEnrollOutcome.Failed(f.status(), f.code(), f.retryAfterSeconds());
+    }
+
+    /** Transient Protocol C failures (503, 429, I/O) are retried this many times before giving up with exit 4. */
+    static final int REENROLL_ATTEMPTS = 5;
+
+    /**
+     * Automatic recovery after cert_expired (DECISIONS #95). Returns null on success (the new identity is on disk), or
+     * the exit code: 5 if a clinician must act, 4 if re-enrollment is impossible (no DEK, rejected proof, ...).
+     */
+    Integer recoverByReEnroll(java.io.PrintStream out, String reason) throws InterruptedException {
+        for (int attempt = 1; ; attempt++) {
+            ReEnrollOutcome o;
+            try {
+                o = reEnroll();
+            } catch (IOException io) {
+                o = new ReEnrollOutcome.Failed(0, "IO_" + io.getClass().getSimpleName(), null);
+            }
+            switch (o) {
+                case ReEnrollOutcome.ReEnrolled r -> {
+                    out.println("RE-ENROLLED serial=" + CertIds.serialDisplay(r.cert()) + " boot_epoch="
+                            + r.bootEpoch() + " reason=" + reason
+                            + (r.bootEpoch() != r.previousEpoch() ? " previous_boot_epoch=" + r.previousEpoch() : "")
+                            + " at=" + clock.instant());
+                    return null;
+                }
+                case ReEnrollOutcome.Reauth a -> {
+                    out.println("REAUTH_REQUIRED code=" + a.code());
+                    return 5;
+                }
+                case ReEnrollOutcome.Failed f -> {
+                    boolean transientFailure = f.status() == 0 && f.code().startsWith("IO_") || f.status() == 503
+                            || f.status() == 429;
+                    out.println("RE_ENROLL_FAILED status=" + f.status() + " error=" + f.code() + " attempt=" + attempt);
+                    if (!transientFailure || attempt >= REENROLL_ATTEMPTS) {
+                        return 4;
+                    }
+                    Thread.sleep(1000L * (f.retryAfterSeconds() != null ? f.retryAfterSeconds() : 2));
+                }
+            }
+        }
+    }
+
     /** After a failed renewal, wait this long (or the server's Retry-After) before the next attempt. */
     static final Duration RENEW_RETRY = Duration.ofSeconds(5);
 
@@ -234,8 +355,13 @@ public final class Simulator {
      * client with the pending certificate from the next batch, and promote it to current after its first 200. A failed
      * renewal is logged and streaming continues on the current certificate.
      *
-     * <p>Returns the process exit code: 0 done, 3 refused or forbidden, 4 the certificate expired (REJECTED
-     * cert_expired).
+     * <p>Protocol C (DECISIONS #95): when the certificate has expired (at launch with no valid pending certificate, a
+     * 403 with reason EXPIRED or OUTSIDE_VALIDITY, or a refused handshake past not_after), the simulator re-enrolls
+     * with the DEK and its stored boot_epoch, prints RE-ENROLLED, and sends the same frame again with the new key.
+     *
+     * <p>Returns the process exit code: 0 done, 3 refused or forbidden (a revoked certificate is never recovered), 4
+     * the certificate expired and re-enrollment was impossible, 5 a clinician must act (REAUTH_REQUIRED or an epoch
+     * rejection).
      */
     public int stream(long intervalMs, long count, java.io.PrintStream out, StreamOptions options)
             throws InterruptedException {
@@ -254,9 +380,17 @@ public final class Simulator {
             }
         }
         if (active.expiredAt(clock.instant())) {
+            // DECISIONS #95: expired while the device was off, and no valid pending certificate: Protocol C.
             out.println("REJECTED cert_expired serial=" + CertIds.serialDisplay(active.cert()) + " not_after="
                     + active.cert().getNotAfter().toInstant());
-            return 4;
+            Integer exit = recoverByReEnroll(out, "cert_expired");
+            if (exit != null) {
+                return exit;
+            }
+            SimulatorStateStore.Enrollment fresh = store.load().orElseThrow();
+            current = Identity.of(fresh.olkKey(), fresh.olkCert());
+            active = current;
+            usingPending = false;
         }
         GatewayClient client = GatewayClient.mtlsClient(config.trustFile(), active.key(), active.cert());
         URI ingest = config.mtlsUrl().resolve("/api/v1/telemetry/ingest");
@@ -329,9 +463,9 @@ public final class Simulator {
                 SimulatorState state = store.load().orElseThrow().state();
                 java.util.UUID batchId = java.util.UUID.randomUUID();
                 Instant sentAt = clock.instant();
+                var metrics = currentScenario.generate(config.deviceId() + "/" + state.bootEpoch(), seq);
                 byte[] payload = TelemetryFrames.payload(config.deviceId(), state.assignmentId(), state.bootEpoch(),
-                        seq, batchId, nb.measuredAt(), sentAt,
-                        currentScenario.generate(config.deviceId() + "/" + state.bootEpoch(), seq));
+                        seq, batchId, nb.measuredAt(), sentAt, metrics);
                 String jws = com.vitalsshield.crypto.TelemetryJws.sign(payload, active.key(), active.der());
 
                 while (true) {                                // same frame until it is answered (DECISIONS #44)
@@ -345,7 +479,22 @@ public final class Simulator {
                                 out.println("REJECTED cert_expired serial=" + CertIds.serialDisplay(active.cert())
                                         + " not_after=" + active.cert().getNotAfter().toInstant() + " last_ok_seq="
                                         + lastOkSeq);
-                                return 4;
+                                Integer exit = recoverByReEnroll(out, "cert_expired");
+                                if (exit != null) {
+                                    return exit;
+                                }
+                                client.close();
+                                SimulatorStateStore.Enrollment fresh = store.load().orElseThrow();
+                                current = Identity.of(fresh.olkKey(), fresh.olkCert());
+                                active = current;
+                                usingPending = false;
+                                client = GatewayClient.mtlsClient(config.trustFile(), active.key(), active.cert());
+                                // The same frame (sequence number, batch id) again, signed by the new key.
+                                SimulatorState st = fresh.state();
+                                jws = com.vitalsshield.crypto.TelemetryJws.sign(TelemetryFrames.payload(
+                                        config.deviceId(), st.assignmentId(), st.bootEpoch(), seq, batchId,
+                                        nb.measuredAt(), sentAt, metrics), active.key(), active.der());
+                                continue;
                             }
                             out.println("REJECTED handshake_refused last_ok_seq=" + lastOkSeq + " ms_since_last_ok="
                                     + (System.nanoTime() - lastOkAt) / 1_000_000);
@@ -358,7 +507,8 @@ public final class Simulator {
                     boolean idempotent = r.body() != null && r.body().contains("\"idempotent_retry\":true");
                     out.println("SENT seq=" + seq + " batch=" + batchId.toString().substring(0, 8) + " status="
                             + r.status() + " rtt_ms=" + rtt + " measured_at=" + nb.measuredAt() + " scenario="
-                            + currentScenario.cliName() + trustState(r.body()) + (idempotent ? " idempotent" : ""));
+                            + currentScenario.cliName() + trustState(r.body()) + (idempotent ? " idempotent" : "")
+                            + (r.status() == 200 ? "" : " error=" + failed(r).code()));
                     if (r.status() == 503) {
                         Thread.sleep(1000L * r.headers().firstValue("Retry-After").map(Long::parseLong).orElse(1L));
                         continue;
@@ -374,9 +524,28 @@ public final class Simulator {
                                     + clock.instant());
                         }
                     } else if (r.status() == 403) {
-                        if (active.expiredAt(clock.instant())) {
-                            out.println("REJECTED cert_expired serial=" + CertIds.serialDisplay(active.cert()));
-                            return 4;
+                        String reason = rejectReason(r.body());
+                        boolean expired = "EXPIRED".equals(reason) || "OUTSIDE_VALIDITY".equals(reason)
+                                || (reason == null && active.expiredAt(clock.instant()));
+                        if (expired) {
+                            // DECISIONS #95: cert_expired is recoverable with the DEK. A revoked certificate is not.
+                            out.println("REJECTED cert_expired serial=" + CertIds.serialDisplay(active.cert())
+                                    + (reason == null ? "" : " reason=" + reason));
+                            Integer exit = recoverByReEnroll(out, "cert_expired");
+                            if (exit != null) {
+                                return exit;
+                            }
+                            client.close();
+                            SimulatorStateStore.Enrollment fresh = store.load().orElseThrow();
+                            current = Identity.of(fresh.olkKey(), fresh.olkCert());
+                            active = current;
+                            usingPending = false;
+                            client = GatewayClient.mtlsClient(config.trustFile(), active.key(), active.cert());
+                            SimulatorState st = fresh.state();
+                            jws = com.vitalsshield.crypto.TelemetryJws.sign(TelemetryFrames.payload(
+                                    config.deviceId(), st.assignmentId(), st.bootEpoch(), seq, batchId,
+                                    nb.measuredAt(), sentAt, metrics), active.key(), active.der());
+                            continue;
                         }
                         out.println(r.body());
                         return 3;
@@ -400,6 +569,19 @@ public final class Simulator {
             client.close();
         }
         return 0;
+    }
+
+    /** The "reason" of a 403 CERT_NOT_ACCEPTED body, or null. */
+    static String rejectReason(String body) {
+        if (body == null) {
+            return null;
+        }
+        try {
+            Object v = parse(body).get("reason");
+            return v instanceof String str ? str : null;
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     private static String trustState(String body) {

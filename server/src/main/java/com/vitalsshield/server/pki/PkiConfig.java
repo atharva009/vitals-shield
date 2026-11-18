@@ -14,7 +14,8 @@ public class PkiConfig {
     }
 
     @Bean
-    public CertificateProfiles certificateProfiles(PkiProperties props) {
-        return new CertificateProfiles(Clock.systemUTC(), new SecureRandom(), props.publicBaseUrl());
+    public CertificateProfiles certificateProfiles(PkiProperties props, Clock clock) {
+        // The one JVM clock (DECISIONS #89): validity windows are written and checked with the same clock.
+        return new CertificateProfiles(clock, new SecureRandom(), props.publicBaseUrl());
     }
 }

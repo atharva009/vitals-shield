@@ -18,7 +18,7 @@ public final class CrlReasons {
             return CRLReason.unspecified;
         }
         return switch (revocationReason) {
-            case "KEY_COMPROMISE" -> CRLReason.keyCompromise;
+            case "KEY_COMPROMISE", "SUSPECTED_CLONE" -> CRLReason.keyCompromise; // DECISIONS #92
             case "CA_COMPROMISE" -> CRLReason.cACompromise;
             case "SUPERSEDED_BY_REPROVISION", "SUPERSEDED_BY_REENROLL", "REPLACED_BEFORE_USE" -> CRLReason.superseded;
             case "HIERARCHY_REBUILD" -> CRLReason.cessationOfOperation;

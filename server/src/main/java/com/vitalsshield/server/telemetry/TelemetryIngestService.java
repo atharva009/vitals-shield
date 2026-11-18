@@ -1,6 +1,7 @@
 package com.vitalsshield.server.telemetry;
 
 import com.vitalsshield.crypto.TelemetryJws;
+import com.vitalsshield.server.anomaly.SequenceRegressionTrap;
 import com.vitalsshield.server.clinical.ClinicalEvaluator;
 import com.vitalsshield.server.gateway.ResolvedCert;
 import com.vitalsshield.server.pki.trust.CertKey;
@@ -79,10 +80,13 @@ public class TelemetryIngestService {
     private final Clock clock;
     private final ClinicalEvaluator evaluator;
     private final CertificateActivationService activation;
+    private final SequenceRegressionTrap sequenceTrap;
 
     public TelemetryIngestService(NamedParameterJdbcTemplate jdbc, TelemetryMetrics metrics, Clock clock,
-                                  ClinicalEvaluator evaluator, CertificateActivationService activation) {
+                                  ClinicalEvaluator evaluator, CertificateActivationService activation,
+                                  SequenceRegressionTrap sequenceTrap) {
         this.activation = activation;
+        this.sequenceTrap = sequenceTrap;
         this.jdbc = jdbc;
         this.metrics = metrics;
         this.clock = clock;
@@ -209,13 +213,17 @@ public class TelemetryIngestService {
         if (!"ACTIVE".equals(device.get("trust_state"))) {
             throw IngestRejection.of(403, "DEVICE_NOT_ACTIVE");
         }
+        String code;
         if (!p.bootEpoch().equals(device.get("boot_epoch"))) {
-            throw IngestRejection.of(409, "BOOT_EPOCH_MISMATCH");
+            code = "BOOT_EPOCH_MISMATCH";
+        } else if ((Long) device.get("last_sequence_num") - p.sequenceNumber() > 63) {
+            code = "SEQUENCE_TOO_OLD";
+        } else {
+            code = "DUPLICATE_SEQUENCE_REPLAY";
         }
-        if ((Long) device.get("last_sequence_num") - p.sequenceNumber() > 63) {
-            throw IngestRejection.of(409, "SEQUENCE_TOO_OLD");
-        }
-        throw IngestRejection.of(409, "DUPLICATE_SEQUENCE_REPLAY");
+        // DECISIONS #93: idempotent retries returned above, so only a different batch reaches the trap.
+        sequenceTrap.record(p.deviceId(), p.batchId(), code, p.sequenceNumber());
+        throw IngestRejection.of(409, code);
     }
 
     private Outcome ok(UUID batchId, String trustState, boolean idempotent) {

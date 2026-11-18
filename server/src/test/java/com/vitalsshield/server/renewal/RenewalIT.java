@@ -163,7 +163,9 @@ class RenewalIT {
             assertThat(oldRow).containsEntry("status", "RENEWED");
             Instant grace = ((java.sql.Timestamp) oldRow.get("grace_expires_at")).toInstant();
             Instant activatedAt = ((java.sql.Timestamp) newRow.get("activated_at")).toInstant();
-            assertThat(Duration.between(activatedAt, grace)).isEqualTo(Duration.ofSeconds(3));
+            // grace_expires_at is JVM time (the handshake compares it with the JVM clock); activated_at is Postgres
+            // now() like issued_at (DECISIONS #89). Two clocks, so only approximately 3 s apart.
+            assertThat(Duration.between(activatedAt, grace)).isBetween(Duration.ofMillis(2500), Duration.ofMillis(3500));
 
             // Within grace the old certificate still works, on the kept-alive socket and on a new one.
             assertThat(oldKeepAlive.get("/api/v1/telemetry/ping").status()).isEqualTo(200);

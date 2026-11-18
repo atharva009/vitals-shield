@@ -301,14 +301,16 @@ public class CrlService {
         Instant cutoff = now.minus(pki.leafTtl()).minus(Duration.ofHours(1));
         jdbc.query("""
                 SELECT serial_number, voided_at FROM issued_serials
-                 WHERE issuer_key_hash = ? AND status = 'VOIDED' AND reserved_at > ?
+                 WHERE issuer_key_hash = ? AND status = 'VOIDED'
+                   AND reserved_at > NOW() - (? * INTERVAL '1 second')
                  ORDER BY voided_at, serial_number
                 """, rs -> {
             BigInteger serial = SerialNumbers.fromHex(rs.getString("serial_number"));
             Timestamp voided = rs.getTimestamp("voided_at");
             bySerial.putIfAbsent(serial, new Entry(serial, voided == null ? now : voided.toInstant(),
                     CRLReason.superseded));
-        }, ca.issuerKeyHash(), Timestamp.from(cutoff));
+        }, ca.issuerKeyHash(), Duration.between(cutoff, now).toSeconds());
+        // reserved_at is DEFAULT NOW() (Postgres), so the window is applied with Postgres now() (DECISIONS #89).
         return new ArrayList<>(bySerial.values());
     }
 

@@ -164,9 +164,11 @@ public class CertificateActivationService {
             }
         }
         jdbc.update("""
-                UPDATE certificates SET status = 'ACTIVE', activated_at = ?
+                UPDATE certificates SET status = 'ACTIVE', activated_at = NOW()
                  WHERE issuer_key_hash = ? AND serial_number = ? AND status = 'ISSUED_PENDING_USE'
-                """, Timestamp.from(now), newKey.issuerKeyHash(), newKey.serial());
+                """, newKey.issuerKeyHash(), newKey.serial());
+        // activated_at is Postgres-stamped like issued_at, so issue-to-activation is one clock (DECISIONS #89);
+        // grace_expires_at above is JVM time because the handshake and per-request checks compare it with the JVM.
         return new Activation(deviceId, newKey, oldKey, now, grace);
     }
 

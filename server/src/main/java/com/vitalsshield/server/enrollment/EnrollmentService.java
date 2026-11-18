@@ -263,10 +263,12 @@ public class EnrollmentService {
                 SELECT token_id, status::text AS status, webauthn_cred_id_b64, webauthn_auth_data,
                        webauthn_client_json, webauthn_signature, expires_at
                   FROM device_bootstrap_tokens
-                 WHERE device_id = ? AND token_hash = ? AND expires_at > NOW()
+                 WHERE device_id = ? AND token_hash = ? AND expires_at > ?
                    AND (status = 'ISSUED' OR (status = 'CLAIMING' AND claimed_at < NOW() - INTERVAL '2 minutes'))
                  FOR UPDATE
-                """, req.deviceId(), tokenHash(req.bootstrapToken()));
+                """, req.deviceId(), tokenHash(req.bootstrapToken()), Timestamp.from(clock.instant()));
+        // expires_at is JVM-written (and signed into the provisioning digest), so it is compared with the JVM clock;
+        // claimed_at is Postgres-stamped and compared with Postgres NOW() (DECISIONS #89).
         if (tokens.isEmpty()) {
             return EnrollmentResult.error(401, "INVALID_BOOTSTRAP");
         }
@@ -355,8 +357,8 @@ public class EnrollmentService {
         byte[] der = encoded(cert);
         jdbc.update("""
                 INSERT INTO certificates (issuer_key_hash, serial_number, device_id, cert_thumbprint_s256, cert_pem,
-                                          not_before, not_after, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE')
+                                          not_before, not_after, status, issued_via)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'ACTIVE', 'ENROLL')
                 """, newKey.issuerKeyHash(), newKey.serial(), req.deviceId(), x5tS256(der), Pems.certificate(cert),
                 Timestamp.from(cert.getNotBefore().toInstant()), Timestamp.from(cert.getNotAfter().toInstant()));
 

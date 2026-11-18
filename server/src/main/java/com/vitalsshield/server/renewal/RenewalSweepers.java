@@ -178,7 +178,7 @@ public class RenewalSweepers {
     public List<CertKey> sweepStaleReservations() {
         List<CertKey> voided = tx.execute(s -> {
             List<CertKey> keys = ledger.sweepStale();
-            Instant now = Instant.now();
+            Instant now = clock.instant();
             keys.forEach(k -> denyList.add(k, now, "REVOKED"));
             return keys;
         });
@@ -191,7 +191,9 @@ public class RenewalSweepers {
 
     /** Blocking. Deletes consumed nonces past expires_at; returns the number deleted. */
     public int sweepNonces() {
-        int n = jdbc.update("DELETE FROM consumed_challenge_nonces WHERE expires_at < NOW()");
+        // expires_at is JVM-written (issued_at_ms + 5 min), so the JVM clock decides (DECISIONS #89).
+        int n = jdbc.update("DELETE FROM consumed_challenge_nonces WHERE expires_at < ?",
+                Timestamp.from(clock.instant()));
         if (n > 0) {
             log.info("Nonce sweep deleted {} expired consumed challenge nonce(s)", n);
         }

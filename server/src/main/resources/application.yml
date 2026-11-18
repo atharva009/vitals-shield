@@ -33,6 +33,31 @@ vitalsshield:
     admin-port: 8445
   eviction:
     enabled: true
+  # Phase 9 (DECISIONS #90 to #98). Thresholds and windows live here, not in code.
+  reenroll:
+    challenge-max-age: PT60S     # |JVM now - issued_at_ms| for a Protocol C challenge
+    per-address-limit: 10        # GET /api/v1/devices/challenge per remote address per rate-window
+    global-limit: 100            # ... and in total
+    rate-window: PT1M
+    collision-window: PT30S      # an ingest this recent counts as a live session (DECISIONS #91)
+  anomaly:
+    sequence-regression:         # DECISIONS #93
+      enabled: true
+      threshold: 3
+      window: PT60S
+    post-drain:                  # DECISIONS #94
+      enabled: true
+      slack: PT5S
+      drain-interval: PT0.25S
+      queue-capacity: 1024
+  backstop:                      # DECISIONS #96
+    enabled: true
+    interval: PT3S
+    lookback: PT30S
+  clock:                         # DECISIONS #98
+    amber-ms: 2000
+    red-ms: 10000
+    check-interval: PT60S
   dashboard:
     # Next.js static export served on the admin port (DECISIONS #47). Relative to the working directory (repo root).
     dir: dashboard/out

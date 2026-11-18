@@ -11,6 +11,12 @@ const TYPE_LABEL: Record<string, string> = {
   SECURITY_ANOMALY_ALERT: "SECURITY",
 };
 
+/** SECURITY_ANOMALY_ALERT rows first (DECISIONS #92), each group newest first as the server sent it. */
+function pinned(alerts: Alert[]): Alert[] {
+  const security = alerts.filter((a) => a.alert_type === "SECURITY_ANOMALY_ALERT");
+  return [...security, ...alerts.filter((a) => a.alert_type !== "SECURITY_ANOMALY_ALERT")];
+}
+
 function statusClass(status: Alert["alert_status"]): string {
   switch (status) {
     case "ACTIVE":
@@ -111,11 +117,23 @@ export function AlertsPanel({
           </tr>
         </thead>
         <tbody>
-          {alerts.map((a) => {
+          {pinned(alerts).map((a) => {
             const retracted = a.alert_status === "RETRACTED_BY_QUARANTINE";
+            const security = a.alert_type === "SECURITY_ANOMALY_ALERT";
             return (
-              <tr key={a.alert_id} className={retracted ? s.rowRetracted : ""}>
-                <td>{new Date(a.created_at).toLocaleTimeString()}</td>
+              <tr
+                key={a.alert_id}
+                className={`${retracted ? s.rowRetracted : ""} ${security ? s.rowPinned : ""}`}
+                data-testid={security ? "alert-security" : undefined}
+              >
+                <td>
+                  {security && (
+                    <span className={`${s.chip} ${s.chipDanger}`} title="Security anomalies are pinned to the top">
+                      PINNED
+                    </span>
+                  )}{" "}
+                  {new Date(a.created_at).toLocaleTimeString()}
+                </td>
                 <td>{a.device_id}</td>
                 <td>
                   <span className={`${s.chip} ${s.chipMuted}`}>{TYPE_LABEL[a.alert_type] ?? a.alert_type}</span>

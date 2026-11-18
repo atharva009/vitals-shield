@@ -292,11 +292,12 @@ public class RenewalService {
         byte[] der = encoded(leaf);
         jdbc.update("""
                 INSERT INTO certificates (issuer_key_hash, serial_number, device_id, cert_thumbprint_s256, cert_pem,
-                                          superseded_serial, not_before, not_after, status, issued_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ISSUED_PENDING_USE', ?)
+                                          superseded_serial, not_before, not_after, status, issued_via)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ISSUED_PENDING_USE', 'RENEW')
                 """, newKey.issuerKeyHash(), newKey.serial(), deviceId, EnrollmentService.x5tS256(der),
                 Pems.certificate(leaf), presenting.serial(), Timestamp.from(leaf.getNotBefore().toInstant()),
-                Timestamp.from(leaf.getNotAfter().toInstant()), Timestamp.from(revokedAt));
+                Timestamp.from(leaf.getNotAfter().toInstant()));
+        // issued_at: DEFAULT NOW(), a Postgres-stamped column (DECISIONS #89); activation sets activated_at the same way.
         return pending.isEmpty() ? null : pending.get(0);
     }
 
@@ -318,14 +319,13 @@ public class RenewalService {
                     jdbc.update("""
                             INSERT INTO certificates (issuer_key_hash, serial_number, device_id, cert_thumbprint_s256,
                                                       cert_pem, not_before, not_after, status, revocation_reason,
-                                                      revoked_at, issued_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, 'REVOKED', 'REPLACED_BEFORE_USE', ?, ?)
+                                                      revoked_at, issued_via)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, 'REVOKED', 'REPLACED_BEFORE_USE', ?, 'RENEW')
                             ON CONFLICT (issuer_key_hash, serial_number) DO NOTHING
                             """, key.issuerKeyHash(), key.serial(), deviceId,
                             EnrollmentService.x5tS256(encoded(signedOrNull)), Pems.certificate(signedOrNull),
                             Timestamp.from(signedOrNull.getNotBefore().toInstant()),
-                            Timestamp.from(signedOrNull.getNotAfter().toInstant()), Timestamp.from(voidedAt),
-                            Timestamp.from(voidedAt));
+                            Timestamp.from(signedOrNull.getNotAfter().toInstant()), Timestamp.from(voidedAt));
                 }
             });
             crls.revocationCommitted(claim.reserved().issuerKeyHash());

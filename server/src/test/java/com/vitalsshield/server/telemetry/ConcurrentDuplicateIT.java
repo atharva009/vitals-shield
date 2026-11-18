@@ -40,7 +40,10 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @Tag("integration")
 @Testcontainers
 @ActiveProfiles("local")
-@SpringBootTest
+// This class checks the Section 5 window CTE on its own: it sends many distinct batches with reused sequence numbers on
+// purpose, which is exactly what the sequence-regression trap (DECISIONS #93) treats as a clone. CloneTrapIT covers
+// the trap.
+@SpringBootTest(properties = "vitalsshield.anomaly.sequence-regression.enabled=false")
 @ExtendWith(OutputCaptureExtension.class)
 class ConcurrentDuplicateIT {
 
