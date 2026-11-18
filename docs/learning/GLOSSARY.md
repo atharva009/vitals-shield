@@ -18,6 +18,8 @@ field (the issuer's SKI), with no issuer name or serial.
 
 **Allow-list** (Phase 2): A set of things that are permitted; anything not listed is refused. For certificates, an in-memory allow-list must be refreshed to learn about new certificates, so a device that enrolls and connects before the next refresh is wrongly refused. VitalsShield does not use one in the handshake path for that reason.
 
+**Anomaly response** (Phase 9): What any split-brain trap does (DECISIONS 92): every usable certificate of the device REVOKED `SUSPECTED_CLONE` and deny-listed, live sockets closed, `trust_state` REAUTH_REQUIRED, a `SECURITY_ANOMALY_ALERT` and a `SECURITY_ANOMALY` audit entry by `system`. Telemetry is not changed; a clinician restores or quarantines.
+
 **Append-only table** (Phase 7): A table whose rows can be inserted and read but not changed or removed. `security_audit_log` enforces it with BEFORE UPDATE, DELETE, and TRUNCATE triggers that raise `security_audit_log is append-only` (DECISIONS #75).
 
 **ARN (Amazon Resource Name)** (Phase 0): AWS's full identifier for a resource, for example
@@ -36,6 +38,8 @@ filesystem operation. A reader sees either the whole old file or the whole new f
 **Attestation** (Phase 6): An authenticator's signed statement of its own model, checked against a vendor root. We request "none" (DECISIONS #63): trust in a new passkey comes from who registered it.
 
 **authenticatorData** (Phase 6): Bytes built and signed by the authenticator: SHA-256 of the RP id, flags (UP, UV, AT, ...), a 4-byte signature counter, and at registration the credential id and COSE public key.
+
+**Backstop poller** (Phase 9): `BackstopPoller`, every 3 s: certificates that became REVOKED since the previous poll (minus 30 s) are deny-listed and their sockets closed. It catches revocations made outside the in-process path, such as a direct SQL UPDATE (DECISIONS 96).
 
 **base64url** (Phase 4): Base64 with `-` and `_` instead of `+` and `/`, and no `=` padding, so the text is safe in URLs and headers. JWS parts and x5t#S256 use it.
 
@@ -83,6 +87,10 @@ checks each link.
 **Clickjacking** (Phase 5): Loading a page inside an invisible frame on another site so a user clicks its buttons without knowing. `X-Frame-Options: DENY` and CSP `frame-ancestors 'none'` stop the dashboard (and its quarantine button) from being framed at all.
 
 **clientDataJSON** (Phase 6): JSON the browser builds for every WebAuthn call: type, challenge, and the page's origin. Its SHA-256 is part of what the authenticator signs, which is what makes passkeys phishing resistant.
+
+**Clock skew** (Phase 9): The difference between two clocks that should agree. Here, Postgres `clock_timestamp()` (in the Docker VM) minus the server's JVM clock, measured by `ClockSkewMonitor` and shown on the dashboard: amber above 2 s, red above 10 s (DECISIONS 98).
+
+**Collision check** (Phase 9): The Protocol C rule that a re-enrollment while the device's identity is in use is a clone: a usable certificate plus a live socket or an ingest in the last 30 s (DECISIONS 91). An expired certificate is never usable, so recovering after a sleep is not a collision.
 
 **Common table expression (CTE)** (Phase 4): A named sub-query introduced with `WITH`. In Postgres a CTE can itself be an UPDATE or INSERT; all parts run as one statement, so the spec's window update and telemetry insert commit or fail together.
 
@@ -160,6 +168,8 @@ produce a pair of numbers (r, s); anyone with the public key can verify them. Ev
 on P-256 with SHA-256.
 
 **Ephemeral port** (Phase 2): A free port number picked at run time instead of a fixed one. Integration tests use them for all three listeners so they never collide with a running server on 8443 to 8445. `TestPorts` finds free ones by briefly opening port 0.
+
+**Epoch resync** (Phase 9): After a clinician restore sets `epoch_resync_allowed`, the next Protocol C request with an epoch at or below the stored one is given stored + 1 with a fresh sequence window, and the permission is spent. Used when a device lost its state partition.
 
 **ES256** (Phase 4): ECDSA on P-256 with SHA-256, as named in JWS (RFC 7518). Its signature is the 64-byte R||S form, not DER.
 
@@ -304,11 +314,15 @@ sign only leaves).
 extensions certificates and CRLs should have and how to validate a chain. "RFC 5280 profile" in this project means
 PKIX.
 
+**Post-drain trap** (Phase 9): A RENEWED certificate presented more than 5 s after its grace ended, while its successor is ACTIVE, raises the anomaly response (DECISIONS 94). The handshake only queues the event; the check runs off the event loop.
+
 **Post-handshake gate** (Phase 2): Our check that runs when any TLS handshake completes on 8443, including resumed ones where the trust manager is not called. It reads the peer certificate from the session, registers the channel, and closes it if the certificate is deny-listed.
 
 **Proof of possession** (Phase 3): Evidence that a party holds a private key, usually a signature made with it over data the verifier checks. The CSR signature proves possession of the OLK; the DEK proof signature proves possession of the DEK.
 
 **Protocol B** (Phase 8): Renewal without a human: challenge, OLK proof and CSR, new leaf ISSUED_PENDING_USE, first-use switchover. Spec Section 4.
+
+**Protocol C** (Phase 9): Offline re-enrollment (spec Section 4): `GET /api/v1/devices/challenge`, then `POST /api/v1/devices/re-enroll` with a DEK signature over the challenge, the stored boot_epoch and the hash of a new CSR. Returns a new ACTIVE leaf; no clinician involved unless a trap fires.
 
 **PSK (pre-shared key)** (Phase 2): In TLS 1.3 resumption, a secret from an earlier session that the client and server both hold. The client proves it knows the PSK instead of sending a certificate, which is why resumption skips certificate checks.
 
@@ -329,6 +343,8 @@ sequence of RDNs. The order of that sequence in DER is what OpenSSL prints.
 **Reason code** (Phase 1): A CRL entry extension that says why a certificate was revoked, such as `keyCompromise`
 (1), `superseded` (4), or `cessationOfOperation` (5). `CrlReasons` maps our database reasons to these codes. For
 `unspecified` (0) we omit the extension, as RFC 5280 recommends.
+
+**REAUTH_REQUIRED** (Phase 9): The device trust state set by the anomaly response. The device can neither stream, renew nor re-enroll until a clinician restores it (passkey step-up) or quarantines it.
 
 **Reconciliation** (Phase 1): Comparing recorded state with actual state and fixing the difference. At startup
 `HierarchyReconciler` compares `kms_keys` with what KMS reports, and either does nothing, rebuilds (local profile), or
@@ -358,6 +374,8 @@ years, published to `var/trust/root-ca.pem`.
 concatenated into 64 bytes. JWS (`ES256`) uses this form. KMS returns DER, so a later phase must convert DER to R||S
 before putting a KMS signature into a JWS.
 
+**Same-clock rule** (Phase 9): Compare a timestamp only with the clock that produced it (DECISIONS 89). Postgres-stamped columns are compared with Postgres `now()`, JVM-written ones with the JVM clock. `docs/CLOCK_INVENTORY.md` lists every comparison.
+
 **SameSite cookie** (Phase 6): A cookie attribute. `Strict` means the browser sends the cookie only on requests that start from the same site.
 
 **Sample standard deviation** (Phase 7): The spread of a set of values, sqrt(sum((x - mean)^2) / (n - 1)). Dividing by n - 1 instead of n corrects for estimating the mean from the same sample.
@@ -378,6 +396,8 @@ days. During the wait the key is in state `PendingDeletion` and cannot sign. Our
 **Self-signed** (Phase 1): A certificate whose issuer and subject are the same and whose signature verifies with its
 own public key. Only a Root should be self-signed. Self-signing proves nothing about trust; it only shows the holder
 had the key.
+
+**Sequence-regression trap** (Phase 9): Three or more ingest rejections (DUPLICATE_SEQUENCE_REPLAY, SEQUENCE_TOO_OLD, BOOT_EPOCH_MISMATCH) with distinct batch ids within 60 s raise the anomaly response (DECISIONS 93). Two copies of one device send the same sequence numbers, so one keeps losing.
 
 **Serial number** (Phase 1): A number, unique per issuer, that identifies a certificate. CRLs list revoked
 certificates by serial. Ours are 20 random bytes with the top bit cleared, stored as lowercase hex without leading
@@ -405,6 +425,8 @@ DER (32 bytes), and its hex is `issuer_key_hash`.
 **SPKI (SubjectPublicKeyInfo)** (Phase 1): The ASN.1 structure that holds a public key and its algorithm (for us,
 `id-ecPublicKey` on `prime256v1`). KMS `GetPublicKey` returns it as DER, and we put it straight into the certificate.
 
+**Split-brain** (Phase 9): Two devices acting as one identity, for example a wearable and a copy of its flash. Each works on its own; the server can only notice the conflict between them (spec Section 2 layer 5).
+
 **SslHandler** (Phase 2): The Netty pipeline component that runs TLS for one channel. Its `handshakeFuture()` completes when the handshake finishes, and its `SSLEngine` session holds the peer certificate. The post-handshake gate listens on it.
 
 **SslProvider** (Phase 2): Netty's choice of TLS implementation: `JDK` (Java's JSSE) or `OPENSSL` (native). We force `JDK` so our Java trust manager is called exactly as JSSE documents.
@@ -414,6 +436,8 @@ DER (32 bytes), and its hex is `issuer_key_hash`.
 **Step-up authentication** (Phase 6): A fresh approval right before a sensitive action. Here the challenge is a hash of the exact action and its stored parameters, so the approval cannot be reused or swapped (DECISIONS #58).
 
 **Streak** (Phase 7): A count of consecutive qualifying batches for one assignment, kept on `patient_device_assignments` with the batch ids: the low-perfusion streak (3 fires) and the drift streak (4 fires).
+
+**SUSPECTED_CLONE** (Phase 9): The revocation reason the anomaly response writes. It maps to CRL reason keyCompromise (1). certificateHold is not used: nothing is ever un-revoked.
 
 **Sweep (serial sweep)** (Phase 4): Voiding every RESERVED serial older than 2 minutes, at boot (SERIALS_SWEPT) and on every stale token reclaim, so a crash between signing and activation still ends with a revocable serial.
 
@@ -428,6 +452,8 @@ database.
 **TLS 1.3** (Phase 2): The current TLS version (RFC 8446). Compared with 1.2 it encrypts the certificates in the handshake, removes renegotiation and old algorithms, and has one handshake shape. Our TLS listeners accept nothing older.
 
 **TLS alert** (Phase 2): A short TLS message that reports an error and usually ends the connection, such as `certificate_required` (116) or `bad_certificate`. A rejected TLS 1.3 client receives it after finishing its own side of the handshake.
+
+**Token bucket** (Phase 9): A rate limiter that holds up to N tokens, refills them at N per window, and spends one per request. `RateLimiter` keeps one per remote address (10 per minute) and one global (100 per minute) for `/challenge` (DECISIONS 90).
 
 **Trust anchor** (Phase 1): A certificate (usually a Root) that a verifier trusts without checking a signature
 above it. Chain validation stops successfully only when it reaches a trust anchor. `TrustAnchors` holds our current

@@ -512,6 +512,10 @@ REJECTED cert_expired serial=7BDA31EE19F6EA0B1022CA60C721708878CC2EC
 
 and it exited 4, as designed: an expired leaf cannot renew itself.
 
+Changed in Phase 9: exit 4 is now rare. On cert_expired the simulator re-enrolls with its DEK (Protocol C,
+DECISIONS 95) and keeps streaming with the same boot_epoch and sequence numbers; exit 4 remains only when Protocol C
+itself cannot run (for example no DEK). See phase-09-recovery.md.
+
 ### The sweep fix
 
 The Phase 8 sweep already selected ACTIVE, ISSUED_PENDING_USE and RENEWED rows. What looked like a gap was a clock

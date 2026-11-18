@@ -17,7 +17,8 @@ from the spec.
 | 5 | [Operator dashboard: overview API, KMS health monitor, Next.js on the admin port](phase-05-dashboard.md) | `c9645f8` |
 | 6 | [WebAuthn admin plane: passkeys, action-bound step-up, KMS-anchored passkey registry](phase-06-webauthn.md) ([manual Touch ID check](phase-06-manual-touchid.md)) | `7c2873d`, 6.1: `309377e` |
 | 7 | [Clinical engine: activity context, acute and drift alerts with lineage, compressed clock](phase-07-clinical.md) | `5fc4a79` |
-| 8 | [Protocol B renewal: first-use switchover, grace drain, demo TTL rollover](phase-08-renewal.md) | `9b038ea` |
+| 8 | [Protocol B renewal: first-use switchover, grace drain, demo TTL rollover](phase-08-renewal.md) | `9b038ea`, 8.1: `dc83baa` |
+| 9 | [Recovery: Protocol C re-enrollment, split-brain traps, backstop poller, clock discipline](phase-09-recovery.md) | `f0e511a` |
 | | [Glossary](GLOSSARY.md) | |
 
 ## How the whole system fits together
@@ -91,3 +92,13 @@ handshake with its sockets closed once the grace ends. An unused pending leaf re
 as REPLACED_BEFORE_USE and listed on the CRL, every renewal serial goes through the issued_serials ledger, and a
 sweeper expires leaves past not_after. The demo leaf is PT4M, so the dashboard shows a rollover every 1m40s. The
 clinical queue is capped and its overflow counted, and the SD floors were widened.
+
+Phase 9, the last feature phase, added recovery. A device whose leaf expired while it was offline asks the public port
+for a stateless challenge, signs it with its long-lived device key (DEK) and its stored boot_epoch, and gets a new
+ACTIVE leaf with the same epoch and sequence numbers (Protocol C); the simulator does this on its own. Three traps
+watch for two devices sharing one identity: a re-enrollment while the identity is in use, replayed sequence numbers
+from different batches, and an old leaf presented after its grace. Any of them revokes every certificate as
+SUSPECTED_CLONE, sets REAUTH_REQUIRED, and raises a pinned security alert without touching telemetry. A clinician then
+restores (the real device resyncs to a new epoch) or quarantines. A backstop poller enforces revocations made outside
+the process within 3 s, and every timestamp comparison now uses the clock that wrote the value, with the Postgres and
+JVM clocks' skew shown on the dashboard.
