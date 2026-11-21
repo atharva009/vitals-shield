@@ -9,18 +9,18 @@ from the spec.
 
 | Phase | Note | Commit |
 | :--- | :--- | :--- |
-| 0 | [Scaffold: build, Compose stack, schema, KMS smoke tests](phase-00-scaffold.md) | `d23ebe7`, `7d8841d` |
-| 1 | [PKI core: KMS-backed CA hierarchy, profiles, CRLs, reconciliation, boot sequence](phase-01-pki-core.md) | `236b697` |
-| 2 | [Listeners, mTLS, deny-list trust, per-request status, live socket eviction](phase-02-listeners-mtls.md) | `7d531f1`, 2.1: `a16ec1d` |
-| 3 | [Protocol A enrollment, dev seed tool, simulator enroll and persistence](phase-03-enrollment.md) | `adb62df` |
-| 4 | [The thin spine: JWS ingest, replay window, quarantine, serial ledger](phase-04-spine.md) | `0c302cd` |
-| 5 | [Operator dashboard: overview API, KMS health monitor, Next.js on the admin port](phase-05-dashboard.md) | `c9645f8` |
-| 6 | [WebAuthn admin plane: passkeys, action-bound step-up, KMS-anchored passkey registry](phase-06-webauthn.md) ([manual Touch ID check](phase-06-manual-touchid.md)) | `7c2873d`, 6.1: `309377e` |
-| 7 | [Clinical engine: activity context, acute and drift alerts with lineage, compressed clock](phase-07-clinical.md) | `5fc4a79` |
-| 8 | [Protocol B renewal: first-use switchover, grace drain, demo TTL rollover](phase-08-renewal.md) | `9b038ea`, 8.1: `dc83baa` |
-| 9 | [Recovery: Protocol C re-enrollment, split-brain traps, backstop poller, clock discipline](phase-09-recovery.md) | `f0e511a` |
-| 10a | Hardening, no note: no-false-positive gate, demo profile, stage scripts, rehearsal; see [`DEMO_RUNBOOK.md`](../DEMO_RUNBOOK.md), [`demo-fallback.md`](../demo-fallback.md), [`RELEASE_CHECK.md`](../RELEASE_CHECK.md) | `d7272fd`, 10a.1: `ee599b0` |
-| 10b | Documents, no note: [spec v2](../vitalsshield_technical_architecture_specification_v2.md), [traceability](../TRACEABILITY.md), [Q&A drill](../QA_DRILL.md); 10b.1 closes the evidence gaps (ingest 503 STORE_UNAVAILABLE, D103; tests for alert 46, the challenge rate limit, renew and re-enroll 503s, DEVICE_UNASSIGNED; the drill run again) | `4e90d8a`, 10b.1: this phase |
+| 0 | [Scaffold: build, Compose stack, schema, KMS smoke tests](phase-00-scaffold.md) | `a81ffaf`, `5b8e25a` |
+| 1 | [PKI core: KMS-backed CA hierarchy, profiles, CRLs, reconciliation, boot sequence](phase-01-pki-core.md) | `87febdf` |
+| 2 | [Listeners, mTLS, deny-list trust, per-request status, live socket eviction](phase-02-listeners-mtls.md) | `1f3de89`, 2.1: `15b72dc` |
+| 3 | [Protocol A enrollment, dev seed tool, simulator enroll and persistence](phase-03-enrollment.md) | `c1825dd` |
+| 4 | [The thin spine: JWS ingest, replay window, quarantine, serial ledger](phase-04-spine.md) | `c88dd5c` |
+| 5 | [Operator dashboard: overview API, KMS health monitor, Next.js on the admin port](phase-05-dashboard.md) | `41c77b1` |
+| 6 | [WebAuthn admin plane: passkeys, action-bound step-up, KMS-anchored passkey registry](phase-06-webauthn.md) ([manual Touch ID check](phase-06-manual-touchid.md)) | `d94cc1a`, 6.1: `4ac6792` |
+| 7 | [Clinical engine: activity context, acute and drift alerts with lineage, compressed clock](phase-07-clinical.md) | `db3d508` |
+| 8 | [Protocol B renewal: first-use switchover, grace drain, demo TTL rollover](phase-08-renewal.md) | `e732bfc`, 8.1: `f987fc5` |
+| 9 | [Recovery: Protocol C re-enrollment, split-brain traps, backstop poller, clock discipline](phase-09-recovery.md) | `24c787a` |
+| 10a | Hardening, no note: no-false-positive gate, demo profile, stage scripts, rehearsal; see [`DEMO_RUNBOOK.md`](../DEMO_RUNBOOK.md), [`demo-fallback.md`](../demo-fallback.md), [`RELEASE_CHECK.md`](../RELEASE_CHECK.md) | `72cadfe`, 10a.1: `0552be3` |
+| 10b | Documents, no note: [spec v2](../vitalsshield_technical_architecture_specification_v2.md), [traceability](../TRACEABILITY.md), [Q&A drill](../QA_DRILL.md); 10b.1 closes the evidence gaps (ingest 503 STORE_UNAVAILABLE, D103; tests for alert 46, the challenge rate limit, renew and re-enroll 503s, DEVICE_UNASSIGNED; the drill run again) | `c691ee6`, 10b.1: this phase |
 | | [Glossary](GLOSSARY.md) | |
 
 ## The finished system on one page

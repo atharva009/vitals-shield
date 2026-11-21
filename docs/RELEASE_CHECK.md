@@ -6,7 +6,7 @@ At the time that meant 29 commits on `main`, plus the tags `dashboard-green-v1` 
 
 ## Result
 
-**One finding, not fixed by rewriting history (see below): two real bootstrap tokens from Phase 3 are in the history
+**One finding, removed by rewriting history before the first push (see below): two real bootstrap tokens from Phase 3 are in the history
 of `docs/learning/phase-03-enrollment.md`.** Nothing else sensitive was found. No private key, no LocalStack token, no
 setup code, no `.env`, and no key, state or keystore file was ever committed.
 
@@ -22,7 +22,7 @@ setup code, no `.env`, and no key, state or keystore file was ever committed.
 
 ### The finding
 
-- **Where:** `docs/learning/phase-03-enrollment.md` (the "Verify it yourself" outputs), added in `0886322`
+- **Where:** `docs/learning/phase-03-enrollment.md` (the "Verify it yourself" outputs), added in `ce89a4f`
   (docs(learning): phase 3 notes, 2026-11-13) and present in every later commit and both tags.
 - **What:** two `./gradlew :server:seedDemoDevice` outputs, `BOOTSTRAP_TOKEN=<redacted-bootstrap-token>` and
   `BOOTSTRAP_TOKEN=<redacted-bootstrap-token>` (redacted here).
@@ -31,15 +31,17 @@ setup code, no `.env`, and no key, state or keystore file was ever committed.
   a hash of each was ever stored, in a database that has been dropped and recreated by `scripts/reset-demo-state.sh`
   several times since. Neither can enroll anything today.
 - **What was done:** the working-tree file now reads `BOOTSTRAP_TOKEN=<redacted in Phase 10a>`; that change is in
-  the Phase 10a commit. History was **not** rewritten, as instructed. Removing the strings from history before
-  publishing would need `git filter-repo` (or BFG) on `docs/learning/phase-03-enrollment.md`, followed by re-creating
-  the tags, and is the owner's decision.
+  the Phase 10a commit.
+
+  On 2026-11-21, before the first push, the history was rewritten with `git filter-repo` to remove the two consumed
+  bootstrap tokens and their 4-plus-4-character fragments (each replaced with `<redacted-bootstrap-token>` in every
+  version of every file) and to set a single author identity. The tags were re-created on the rewritten commits.
 
 ## Bootstrap tokens in history
 
 - **File:** `docs/learning/phase-03-enrollment.md`, in the "Verify it yourself" outputs of `./gradlew
   :server:seedDemoDevice` (two `BOOTSTRAP_TOKEN=` lines, shown here as `<redacted-bootstrap-token>` and `<redacted-bootstrap-token>`).
-- **First commit:** `0886322` (docs(learning): phase 3 notes, 2026-11-13). They are in every later commit, in the tags
+- **First commit:** `ce89a4f` (docs(learning): phase 3 notes, 2026-11-13). They are in every later commit, in the tags
   `spine-green-v1` and `dashboard-green-v1`, and in `demo-ready-v1` as first tagged.
 - **Why they are harmless:**
   - each is single-use, and each was consumed by the enrollment printed on the very next line of the same output;
@@ -47,8 +49,8 @@ setup code, no `.env`, and no key, state or keystore file was ever committed.
   - the server stores only a hash, and every database that held those hashes has since been dropped by
     `scripts/reset-demo-state.sh` (DECISIONS 75);
   - they were dev-seed tokens for the local Compose stack, never for any shared environment.
-- **Current tree:** both are redacted (`BOOTSTRAP_TOKEN=<redacted in Phase 10a>`) since commit `d7272fd`; `git grep -E
-  'BOOTSTRAP_TOKEN=[A-Za-z0-9_-]{43}'` on the current tree finds nothing. History has not been rewritten.
+- **Current tree:** both are redacted (`BOOTSTRAP_TOKEN=<redacted in Phase 10a>`) since commit `72cadfe`; `git grep -E
+  'BOOTSTRAP_TOKEN=[A-Za-z0-9_-]{43}'` on the current tree finds nothing.
 - **If rewriting:** `git filter-repo --replace-text` (or BFG) on that file, then re-create the three tags and
   force-push. Every clone of the old history keeps the strings.
 
@@ -75,7 +77,7 @@ unset TOK
 grep -E '^\+' history.patch | grep -oE '(^|[^A-Za-z0-9_-])[A-Za-z0-9_-]{43}([^A-Za-z0-9_=-]|$)' \
   | grep -oE '[A-Za-z0-9_-]{43}' | sort -u | wc -l           # 25, each classified by context (table above)
 git log --all --format='%h %ad %s' --date=short -S'BOOTSTRAP_TOKEN='
-#   0886322 2026-11-13 docs(learning): phase 3 notes   (first commit containing the two tokens)
+#   ce89a4f 2026-11-13 docs(learning): phase 3 notes   (first commit containing the two tokens)
 # setup-code / bearer next to a 43-character value (Python regex over the added lines)   # 0 hits
 
 # 4, 5. sensitive paths ever committed

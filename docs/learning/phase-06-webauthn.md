@@ -1,6 +1,6 @@
 # Phase 6: The WebAuthn admin plane (passkeys, action-bound step-up, KMS-anchored passkey registry)
 
-Commit: `7c2873d` (feat(admin): webauthn passkeys with action-bound step-up, kms-anchored passkey registry).
+Commit: `d94cc1a` (feat(admin): webauthn passkeys with action-bound step-up, kms-anchored passkey registry).
 Manual Touch ID walkthrough: [phase-06-manual-touchid.md](phase-06-manual-touchid.md).
 
 ## 1. What this phase built and why
@@ -655,7 +655,7 @@ stolen KMS Key #4 credentials, defeats the anchors, as spec Section 2 layer 3 st
 
 ## Changed in Phase 6.1
 
-Commit: `309377e` (fix(admin): restrict dev seed passkey; audit entries atomic with audited actions).
+Commit: `4ac6792` (fix(admin): restrict dev seed passkey; audit entries atomic with audited actions).
 
 ### Why a passkey whose private key is a file must not have clinician powers
 

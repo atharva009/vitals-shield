@@ -1,6 +1,6 @@
 # Phase 9: Protocol C re-enrollment, split-brain traps, the backstop poller, and clock discipline
 
-Commit: `f0e511a` (feat(recovery): protocol c re-enrollment, split-brain traps, backstop poller, clock
+Commit: `24c787a` (feat(recovery): protocol c re-enrollment, split-brain traps, backstop poller, clock
 discipline). This is the last feature phase; after it the code is frozen.
 
 ## 1. What this phase built and why

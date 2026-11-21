@@ -1,6 +1,6 @@
 # Phase 2: Listeners, mTLS, deny-list trust, per-request status, live socket eviction
 
-Commit: `7d531f1` (feat(gateway): mtls listeners, deny-list trust manager, cert status filter, live socket eviction).
+Commit: `1f3de89` (feat(gateway): mtls listeners, deny-list trust manager, cert status filter, live socket eviction).
 
 ## 1. What this phase built and why
 
@@ -645,7 +645,7 @@ within milliseconds, bursts are coalesced, and a CRL is re-signed before its nex
 
 ## 11. Changed in Phase 2.1
 
-Commit `a16ec1d` (fix(gateway): invalidate tls sessions after handshake check; cache and republish crls).
+Commit `15b72dc` (fix(gateway): invalidate tls sessions after handshake check; cache and republish crls).
 
 ### Session invalidation: resumption is now impossible (DECISIONS #26)
 

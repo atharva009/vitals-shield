@@ -1,6 +1,6 @@
 # Phase 8: Protocol B renewal with first-use switchover, grace drain, and demo TTL rollover
 
-Commit: `9b038ea` (feat(renewal): protocol b with first-use activation, grace drain, and demo ttl rollover).
+Commit: `e732bfc` (feat(renewal): protocol b with first-use activation, grace drain, and demo ttl rollover).
 
 ## 1. What this phase built and why
 

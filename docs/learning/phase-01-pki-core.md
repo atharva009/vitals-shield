@@ -1,6 +1,6 @@
 # Phase 1: PKI core
 
-Commit: `236b697` (feat(pki): kms-backed ca hierarchy, rfc 5280 profiles, crls, reconciliation, boot sequence).
+Commit: `87febdf` (feat(pki): kms-backed ca hierarchy, rfc 5280 profiles, crls, reconciliation, boot sequence).
 
 ## 1. What this phase built and why
 

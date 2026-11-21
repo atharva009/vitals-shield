@@ -1,6 +1,6 @@
 # Phase 5: Operator dashboard (overview API, KMS health monitor, Next.js on the admin port)
 
-Commit: `c9645f8` (feat(dashboard): operator overview api, kms health monitor, next.js dashboard on admin port).
+Commit: `41c77b1` (feat(dashboard): operator overview api, kms health monitor, next.js dashboard on admin port).
 
 ## 1. What this phase built and why
 

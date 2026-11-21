@@ -1,6 +1,6 @@
 # Phase 0: Scaffold
 
-Commits: `d23ebe7` (scaffold: Gradle modules, Compose stack, V1 schema, KMS smoke tests) and `7d8841d` (move to
+Commits: `a81ffaf` (scaffold: Gradle modules, Compose stack, V1 schema, KMS smoke tests) and `5b8e25a` (move to
 Spring Boot 4.1, Gradle 9 with Groovy DSL, a Java convention plugin, Postgres on host port 5433).
 
 ## 1. What this phase built and why

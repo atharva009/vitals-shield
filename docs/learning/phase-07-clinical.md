@@ -1,6 +1,6 @@
 # Phase 7: The clinical engine (activity context, acute and drift alerts with lineage, compressed clock)
 
-Commit: `5fc4a79` (feat(clinical): activity context, acute and drift engine with lineage, compressed clock scenarios).
+Commit: `db3d508` (feat(clinical): activity context, acute and drift engine with lineage, compressed clock scenarios).
 
 *The spec's own disclaimer applies to everything in this note: z-score thresholds, the calibration window size, and
 the acute physiological limits are configurable engineering defaults and have not been clinically validated (spec

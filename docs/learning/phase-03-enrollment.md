@@ -1,6 +1,6 @@
 # Phase 3: Protocol A enrollment, dev seed tool, simulator enroll and persistence
 
-Commit: `adb62df` (feat(enrollment): protocol a with dek proof and kms registry anchor; simulator enroll and
+Commit: `c1825dd` (feat(enrollment): protocol a with dek proof and kms registry anchor; simulator enroll and
 persistence).
 
 ## 1. What this phase built and why

@@ -1,6 +1,6 @@
 # Phase 4: The thin spine (JWS ingest, replay window, quarantine, serial ledger)
 
-Commit: `0c302cd` (feat(spine): jws telemetry ingest, replay window, quarantine; serial reservation ledger).
+Commit: `c88dd5c` (feat(spine): jws telemetry ingest, replay window, quarantine; serial reservation ledger).
 
 ## 1. What this phase built and why
 
