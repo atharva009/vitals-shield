@@ -81,6 +81,8 @@ public class ClockSkewMonitor {
                 log.info("Clock skew back to GREEN ({} ms)", skew);
             }
             last = s;
+            // One line per check (every 60 s), so a soak run can report min and max skew from the log.
+            log.info("Clock skew check: {} ms ({})", skew, state);
             return s;
         } catch (RuntimeException e) {
             Snapshot s = new Snapshot(null, jvm.instant(), State.UNKNOWN, e.toString());

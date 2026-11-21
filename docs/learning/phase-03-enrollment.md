@@ -416,7 +416,7 @@ run, the thumbprint as 43 base64url characters, the URN SAN only, critical clien
 
 ```
 $ ./gradlew :server:seedDemoDevice
-BOOTSTRAP_TOKEN=<redacted-bootstrap-token>
+BOOTSTRAP_TOKEN=<redacted in Phase 10a>
 
 $ ./gradlew :simulator:run --args="enroll --device-id dev_wearable_019 --token <token>"
 ENROLLED serial=33fb8956eec9cbd7662c6c2b76551af2417d8330 boot_epoch=1 not_after=2026-11-14T12:26:15Z
@@ -467,7 +467,7 @@ had exactly one `Enrolled dev_wearable_019` line after the second enroll command
 $ ./gradlew :simulator:run --args="factory-wipe --device-id dev_wearable_019"
 FACTORY_WIPED simulator-state/dev_wearable_019
 $ ./gradlew :server:seedDemoDevice
-BOOTSTRAP_TOKEN=<redacted-bootstrap-token>
+BOOTSTRAP_TOKEN=<redacted in Phase 10a>
 $ ./gradlew :simulator:run --args="enroll --device-id dev_wearable_019 --token <token>"
 ENROLLED serial=3b633bc0a43d4aa3e79fb5497dd974c458239dd0 boot_epoch=2 not_after=2026-11-14T12:26:44Z
 $ psql -c "select status, left(serial_number,12), revocation_reason, not_after from certificates where device_id='dev_wearable_019' order by not_before"

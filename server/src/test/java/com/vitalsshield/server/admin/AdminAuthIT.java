@@ -72,6 +72,9 @@ class AdminAuthIT {
                 HttpResponse.BodyHandlers.ofString());
         assertThat(r.statusCode()).isEqualTo(200);
         assertThat(r.body()).contains("ADMIN_CODE_ISSUED").contains("LISTENERS_BOUND");
+        // Phase 10a: what scripts/stage/00-prestage.sh reads, with no secret in it.
+        assertThat(r.body()).contains("\"active_profiles\":[").contains("\"kms_state\":\"")
+                .contains("\"clock\":{\"skew_ms\":").doesNotContain(code());
     }
 
     @Test

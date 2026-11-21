@@ -35,7 +35,7 @@ revokes every issued certificate.
 |---|---|
 | `./gradlew test` | Unit tests only (excludes the `integration`, `e2e`, `drill` tags). Needs no Docker. |
 | `./gradlew integrationTest` | `@Tag("integration")`: KMS, PKI, and listener tests against the Compose LocalStack, each with a Testcontainers postgres:16 and listeners on free ports. |
-| `./gradlew e2eTest` | `@Tag("e2e")`: end-to-end flows (none yet). |
+| `./gradlew e2eTest` | `@Tag("e2e")`: end-to-end flows, 6 since Phase 10a, including `NormalOperationNoAnomalyE2E` (traps on, normal device behavior, zero security alerts allowed, DECISIONS 100). |
 | `./gradlew drillTest` | `@Tag("drill")`: failure and recovery drills (none yet). |
 
 To prove the unit tier needs no Docker, point it at a socket that does not exist and leave the Compose stack running:
@@ -78,6 +78,21 @@ extension's cached Gradle model is stale (it can still describe the old Kotlin D
 
 Any other path on a port returns 404 with an empty body. Stop the server with Ctrl-C. `ResumptionIT` needs
 OpenSSL 3 (`OPENSSL_BIN`, default `$(brew --prefix openssl@3)/bin/openssl`).
+
+## Stage runs: the demo profile (Phase 10a)
+
+Every rehearsal and the live demo use the `demo` profile (DECISIONS 99). It extends `local` and pins the stage values:
+PT4M leaves, PT60S grace, a 10-batch calibration, challenge rate limits of 60/min per address and 300/min overall,
+and every trap on.
+
+```sh
+caffeinate -dimsu ./gradlew :server:bootRun --args='--spring.profiles.active=demo'
+scripts/stage/00-prestage.sh      # PASS/FAIL per check, non-zero exit on any FAIL
+```
+
+`scripts/stage/` holds the numbered stage scripts (reset, enroll, stream, drift, clone, recover, panic).
+`docs/DEMO_RUNBOOK.md` is the T-60/T-15/T-2 checklist and the 5-minute script. `docs/demo-fallback.md` is the static
+walkthrough to use if the live stack is down. `local` stays the profile for development and tests.
 
 ## Operator dashboard (Phase 5)
 

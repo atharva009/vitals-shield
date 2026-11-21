@@ -1,0 +1,21 @@
+# Demo profile (DECISIONS 99): every rehearsal and the live run use --spring.profiles.active=demo. It extends `local`
+# (profile group in application.yml: LocalStack KMS, hierarchy rebuild allowed) and pins the stage values explicitly,
+# so a later change to application-local.yml cannot change the show.
+vitalsshield:
+  pki:
+    leaf-ttl: PT4M          # renews about 1m40s after issuance (DECISIONS 83)
+    renewal-grace: PT60S
+  clinical:
+    calibration-size: 10
+  reenroll:
+    # Everything on stage comes from 127.0.0.1, so the per-address limit is effectively a global one; 60/min leaves
+    # room for repeated drills and both clone copies re-enrolling at once (DECISIONS 90, 99).
+    per-address-limit: 60
+    global-limit: 300
+  anomaly:                  # all traps ON (DECISIONS 93, 94)
+    sequence-regression:
+      enabled: true
+    post-drain:
+      enabled: true
+  backstop:
+    enabled: true

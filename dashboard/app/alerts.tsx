@@ -150,17 +150,19 @@ export function AlertsPanel({
                     <div className={s.approved}>retracted {new Date(a.retracted_at).toLocaleTimeString()}</div>
                   )}
                 </td>
-                <td className={s.alertActions}>
-                  {code === SESSION && a.alert_status === "ACTIVE" && (
-                    <button className={s.ghost} disabled={busy === a.alert_id} onClick={() => void act(a, "acknowledge")}>
-                      Acknowledge
-                    </button>
-                  )}
-                  {code === SESSION && (a.alert_status === "ACTIVE" || a.alert_status === "ACKNOWLEDGED") && (
-                    <button className={s.ghost} disabled={busy === a.alert_id} onClick={() => void act(a, "resolve")}>
-                      Resolve
-                    </button>
-                  )}
+                <td>
+                  <div className={s.alertActions}>
+                    {code === SESSION && a.alert_status === "ACTIVE" && (
+                      <button className={s.ghost} disabled={busy === a.alert_id} onClick={() => void act(a, "acknowledge")}>
+                        Acknowledge
+                      </button>
+                    )}
+                    {code === SESSION && (a.alert_status === "ACTIVE" || a.alert_status === "ACKNOWLEDGED") && (
+                      <button className={s.ghost} disabled={busy === a.alert_id} onClick={() => void act(a, "resolve")}>
+                        Resolve
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             );

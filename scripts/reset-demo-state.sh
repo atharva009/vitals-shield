@@ -78,7 +78,8 @@ Reset complete:
   - LocalStack untouched: the next boot finds no ACTIVE kms_keys rows and rebuilds the CA hierarchy (REBUILT)
 
 Next steps:
-  1. ./gradlew :server:bootRun --args='--spring.profiles.active=local'
+  1. caffeinate -dimsu ./gradlew :server:bootRun --args='--spring.profiles.active=demo'
+     (stage runs and rehearsals use the demo profile, DECISIONS 99; development may keep --spring.profiles.active=local)
      (expect "Hierarchy reconciliation: REBUILT" and a new var/admin/setup-code)
   2. curl -s http://localhost:8445/api/v1/admin/auth/status   -> passkeys_registered 0 (first-run screen)
   3. Register the first passkey at http://localhost:8445, or seed a demo device:

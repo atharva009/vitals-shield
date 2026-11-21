@@ -1,6 +1,10 @@
 spring:
   application:
     name: vitalsshield-server
+  profiles:
+    group:
+      # DECISIONS 99: --spring.profiles.active=demo also activates local (LocalStack KMS, rebuild allowed).
+      demo: local
   main:
     # Required: later phases bind every port manually after startup
     # reconciliation, so Spring must never bind a port itself.

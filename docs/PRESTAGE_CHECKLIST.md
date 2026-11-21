@@ -29,3 +29,8 @@ Run through this before the demo slot. Later phases append to it.
 - [ ] Do not leave a PT4M device streaming unattended; use the default 12 h profile for long runs.
 - [ ] Phase 9 (DECISIONS 98): after any laptop sleep, check the dashboard's clock skew tile, and restart Docker Desktop
       if it is amber (above 2 s) or red (above 10 s).
+- [ ] Phase 10a (DECISIONS 99): start the server for every rehearsal and the live run with
+      `caffeinate -dimsu ./gradlew :server:bootRun --args='--spring.profiles.active=demo'`, then run
+      `scripts/stage/00-prestage.sh` and continue only when every line is PASS. The ordered T-60/T-15/T-2 lists are in
+      `docs/DEMO_RUNBOOK.md`; if the stack dies on stage, run `scripts/stage/99-panic.sh` and open
+      `docs/demo-fallback.md`.

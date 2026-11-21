@@ -1,8 +1,7 @@
 .env
 var/
-simulator-state/
-# Phase 9 split-brain drill: simulator clone --to-state-dir simulator-state-clone
-simulator-state-clone/
+# Device key and state partitions (simulator-state/, the Phase 9 clone drill's simulator-state-clone/, any other copy)
+simulator-state*/
 build/
 .gradle/
 node_modules/
@@ -10,3 +9,7 @@ node_modules/
 *.iml
 .DS_Store
 .vscode/
+# Dashboard build output (also in dashboard/.gitignore)
+dashboard/node_modules/
+dashboard/out/
+.next/

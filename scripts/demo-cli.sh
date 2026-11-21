@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # CLI demo: seed, enroll, stream, quarantine, verify. Run from anywhere; it works in the repo root.
-# Assumes `docker compose up -d` and `./gradlew :server:bootRun --args='--spring.profiles.active=local'` in another
-# terminal.
+# Assumes `docker compose up -d` and `./gradlew :server:bootRun --args='--spring.profiles.active=demo'` in another
+# terminal (the demo profile, DECISIONS 99; scripts/stage/ is the Phase 10a stage flow).
 #
 #   DEMO_PAUSE=2          seconds between steps
 #   DEMO_QUARANTINE=ui    (default) wait for the operator to press Quarantine on the dashboard (Touch ID step-up)
