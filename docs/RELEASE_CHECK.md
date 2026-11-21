@@ -52,7 +52,7 @@ setup code, no `.env`, and no key, state or keystore file was ever committed.
 - **If rewriting:** `git filter-repo --replace-text` (or BFG) on that file, then re-create the three tags and
   force-push. Every clone of the old history keeps the strings.
 
-Decision: <keep | rewrite>, by Atharva, <date>
+Decision: rewrite, by Atharva Hankare, 2026-11-21. History was rewritten before the first push to remove the two consumed bootstrap tokens and set a single author identity.
 
 ## Commands (outputs redacted)
 
