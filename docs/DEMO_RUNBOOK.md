@@ -98,3 +98,35 @@ step, the stage scripts above, and the demo profile with PT3M leaves, all after 
 | 7 quarantine | 1:21 | 6 s | 2 certs revoked, 1 socket closed, 8.7 ms, 65 batches quarantined; simulator exit 3 |
 | 8 clone + restore | 1:28 | 13 s | SEQUENCE_REGRESSION, both copies exit 3; restored; `RE-ENROLLED serial=679A794D… boot_epoch=2` |
 | 9 close | 1:41 | 11 s | audit chain valid, 10 entries |
+
+## Soak results
+
+Both runs used the demo profile with every trap on, against `bootRun` under `caffeinate -dimsu`, with the
+simulator binary on `--scenario resting` at one batch per second. The query is below.
+
+| Run | Leaves | Device | Duration | Batches | Non-200 | Renewals | Activation min / median / max | SECURITY_ANOMALY | Deadlocks (before, after) | Clock skew |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Phase 10a, 2026-11-20 | PT4M | `dev_soak_002` | 30 min 37 s | 1800 | 0 | 18 | 25.7 / 40.2 / 70.7 ms | 0 | 0, 0 | -1 to +1 ms (32 checks) |
+| Phase 10a.1, 2026-11-21 | PT3M | `dev_soak_003` | 10 min 14 s | 600 | 0 | 10 | 23.3 / 32.3 / 41.7 ms | 0 | 0, 0 | -4 to +1 ms (11 checks) |
+
+```sql
+SELECT count(*) AS batches, count(DISTINCT sequence_number) AS distinct_seq,
+       max(ingested_at) - min(ingested_at) AS span,
+       count(*) FILTER (WHERE trust_state = 'ACCEPTED') AS accepted
+  FROM telemetry_records WHERE device_id = :'dev';
+
+SELECT count(*) FILTER (WHERE issued_via = 'RENEW') AS renewals,
+       round(min(extract(epoch FROM activated_at - issued_at) * 1000)::numeric, 1) AS min_activation_ms,
+       round((percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM activated_at - issued_at) * 1000))::numeric, 1)
+           AS median_activation_ms,
+       round(max(extract(epoch FROM activated_at - issued_at) * 1000)::numeric, 1) AS max_activation_ms
+  FROM certificates WHERE device_id = :'dev' AND issued_via IN ('RENEW', 'REENROLL');
+
+SELECT (SELECT count(*) FROM clinical_alerts WHERE alert_type = 'SECURITY_ANOMALY_ALERT') AS security_anomaly_alerts,
+       (SELECT count(*) FROM security_audit_log WHERE event_type = 'SECURITY_ANOMALY') AS security_anomaly_audit;
+
+SELECT deadlocks FROM pg_stat_database WHERE datname = 'vitalsshield';   -- read before and after the run
+```
+
+Non-200 counts and the RENEWED/ACTIVATED line counts come from the simulator's own output (`grep -c '^SENT'` and so
+on). Clock skew comes from the server's `Clock skew check:` log lines (one every 60 s, DECISIONS 98).

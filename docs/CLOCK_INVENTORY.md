@@ -51,3 +51,4 @@ fails it.
 | 28 | `audit/AuditLog.java` | `created_at` | JVM, hash input only, never compared with a clock | OK |
 | 29 | `clock/ClockSkewMonitor.java:50` | `clock_timestamp()` vs JVM | both, deliberately: this is the skew measurement (DECISIONS 98) | OK |
 | 30 | `admin/KmsHealthMonitor`, `admin/webauthn/CeremonyStore`, `AdminSessionStore`, `BootStatusTracker` | in-memory expiry and timestamps | JVM only | OK |
+| 31 | `pki/CrlService.java:67` (`private final Clock clock = Clock.systemUTC()`) | CRL thisUpdate/nextUpdate, the expiry watch, the CRL cutoffs (rows 8 and 9) | JVM, but the system clock rather than the `Clock` bean (a second JVM clock source, as `CertificateProfiles` was before row 19) | OK (accepted, not changed): both are the system UTC clock in every profile. Only a test that skews the `Clock` bean would see a difference, and the CRL cutoffs (row 8) are already relative. Added in Phase 10b; the code is feature-frozen |

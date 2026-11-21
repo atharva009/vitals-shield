@@ -19,9 +19,65 @@ from the spec.
 | 7 | [Clinical engine: activity context, acute and drift alerts with lineage, compressed clock](phase-07-clinical.md) | `5fc4a79` |
 | 8 | [Protocol B renewal: first-use switchover, grace drain, demo TTL rollover](phase-08-renewal.md) | `9b038ea`, 8.1: `dc83baa` |
 | 9 | [Recovery: Protocol C re-enrollment, split-brain traps, backstop poller, clock discipline](phase-09-recovery.md) | `f0e511a` |
+| 10a | Hardening, no note: no-false-positive gate, demo profile, stage scripts, rehearsal; see [`DEMO_RUNBOOK.md`](../DEMO_RUNBOOK.md), [`demo-fallback.md`](../demo-fallback.md), [`RELEASE_CHECK.md`](../RELEASE_CHECK.md) | `d7272fd`, 10a.1: `ee599b0` |
+| 10b | Documents, no note: [spec v2](../vitalsshield_technical_architecture_specification_v2.md), [traceability](../TRACEABILITY.md), [Q&A drill](../QA_DRILL.md) | this phase |
 | | [Glossary](GLOSSARY.md) | |
 
-## How the whole system fits together
+## The finished system on one page
+
+**What it is.** A patient's wearable streams vitals to a server that must be able to say, for every batch: which
+device signed it, that the device's certificate was valid at that instant, and that the batch is not a replay. A
+clinician must be able to stop a compromised device at once without losing the evidence.
+
+**Keys and certificates.**
+- **CAs and KMS:** a two-tier CA (Root, Device Intermediate, plus a Server TLS CA for the gateway) whose private keys
+  live only in AWS KMS (LocalStack in development). A fourth KMS key, the registry anchor, signs the stored device and
+  passkey registries, so a database edit cannot forge either.
+- **Two device keys:** each device has a long-lived device key (DEK) used only to enroll and re-enroll, and a
+  short-lived operational leaf key (OLK) for mTLS and for signing telemetry.
+- **Lifetimes and the ledger:** leaves last 12 hours in production, 4 minutes in the `local` profile and 3 minutes in
+  the `demo` profile. Every serial the CA signs goes through the `issued_serials` ledger, so it is either RECORDED or
+  VOIDED and deny-listed.
+
+**Protocols.**
+- **A, enrollment:** a clinician approves provisioning with a passkey. The device proves its DEK and a new OLK against
+  a single-use bootstrap token.
+- **B, renewal:** the device renews itself at two thirds of the leaf's life. The new leaf becomes ACTIVE on its first
+  accepted batch, and the old one gets 60 s of grace.
+- **C, re-enrollment:** a device whose leaf expired while it was offline re-enrolls with its DEK and keeps its boot
+  epoch and sequence numbers.
+
+**Every request.**
+- **Revocation in three layers:** the TLS handshake checks an in-memory deny-list, a per-request check reads the
+  certificate's status from the database, and a revocation closes every live socket of that certificate within
+  milliseconds. A backstop poller re-enforces any revocation within 3 s.
+- **Signed batches:** each telemetry batch is a JWS signed by the connection's own certificate key. One SQL statement
+  checks it against a 64-bit replay window and stores it; idempotent retries are answered, not stored twice.
+
+**Clinical.**
+- Each assignment calibrates a personal resting baseline.
+- Drift and acute alerts record exactly which batches and which baseline they came from.
+- A passkey-approved quarantine revokes the device, marks the lookback telemetry QUARANTINED, resets tainted
+  baselines and retracts only the alerts built on that data. Its audit entry is written in the same transaction.
+
+**Clones.** Three traps (re-enroll collision, sequence regression, use of an old leaf after its grace) treat two
+devices acting as one identity as a compromise:
+- every certificate is revoked as SUSPECTED_CLONE and the device goes to REAUTH_REQUIRED;
+- telemetry is not touched;
+- a clinician restores (the real device resyncs to a new epoch) or quarantines.
+
+**Operations.**
+- Every timestamp comparison uses the clock that produced the value (`CLOCK_INVENTORY.md`), and a skew monitor
+  watches the database clock.
+- The admin plane is loopback-only; sessions and ceremonies are in memory.
+- The audit log is a hash chain that the database itself keeps append-only.
+
+**Not built (Designed):** CA failover to a standby Intermediate, Redis for multi-gateway eviction and rate limits,
+S3 Object Lock anchoring of the audit chain, WebAuthn attestation verification, a Server TLS CA CRL, a durable
+clinical outbox, HSM custody and IAM isolation. The residual risks, chief among them a clone that re-enrolls while
+the real device is offline, are in spec v2 "Residual risks".
+
+## How the whole system fits together (phase by phase)
 
 VitalsShield is a Spring Boot 4.1 service (module `server`) backed by PostgreSQL 16 and AWS KMS, which is LocalStack
 during development. Phase 0 created the Gradle build with three modules (`crypto-common`, `server`, `simulator`), the

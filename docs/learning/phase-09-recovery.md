@@ -138,6 +138,10 @@ Postgres `now()`. JVM-written values (`not_before`, `not_after`, `revoked_at`, `
 `deniedFrom`, challenge `issued_at_ms`) are compared with the JVM clock. `docs/CLOCK_INVENTORY.md` lists all 30
 comparisons, and 11 of them were fixed.
 
+Changed in Phase 10b: the inventory has 31 rows (row 31, CrlService's own `Clock.systemUTC()`, was added), and 10 of
+them are FIXED (row 5 in Phase 8.1, nine in Phase 9). "11" above was a miscount: ClockDisciplineIT has 10 checks of
+fixed rows plus one sanity test that the JVM clock really is skewed.
+
 `ClockSkewMonitor` (DECISIONS 98) reads `clock_timestamp()` at boot and every 60 s and subtracts the midpoint of the
 JVM readings taken just before and after. The dashboard tile is amber above 2 s and red above 10 s.
 
@@ -537,5 +541,5 @@ limited.
 **Q: Why do you care which clock a timestamp came from?**
 A: Because they drift apart in exactly the situation demos happen in: a laptop that slept. In the Phase 8 soak run
 Postgres was 13.6 s behind the JVM, and a sweep that compared a JVM time with Postgres NOW() was a tick late. The rule
-now is that every comparison uses the clock that wrote the value. The inventory lists all 30 places, and
-ClockDisciplineIT runs the server 10 minutes off to prove the 11 fixed ones.
+now is that every comparison uses the clock that wrote the value. The inventory lists all 31 places, and
+ClockDisciplineIT runs the server 10 minutes off to prove the 10 fixed ones (counts corrected in Phase 10b).

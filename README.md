@@ -1,135 +1,154 @@
 # VitalsShield
 
-Wearable vitals telemetry with a two-tier KMS-backed PKI. See
-[`docs/vitalsshield_technical_architecture_specification.md`](docs/vitalsshield_technical_architecture_specification.md).
+VitalsShield authenticates a patient's wearable and every vitals batch it sends. Clinicians act on those readings,
+and anyone who copies a device's keys can forge them. So the device certificates are short-lived and issued by a
+two-tier CA whose private keys never leave AWS KMS. Every telemetry batch is signed by the key of the mTLS
+connection that carried it and checked against a replay window. A copied key used alongside the real device is
+detected and cut off within about a second, without deleting any data. A clinician approves provisioning and every security action with a passkey (Touch ID).
 
-## Prerequisites
+The full design, as built, is in [`docs/vitalsshield_technical_architecture_specification_v2.md`](docs/vitalsshield_technical_architecture_specification_v2.md).
 
-- OrbStack (or another Docker runtime with Compose v2)
-- Host port 5433 free. Compose Postgres uses 5433 instead of 5432 so it does not clash with a host-native Postgres.
-- JDK 21. Gradle uses a Java 21 toolchain and downloads one automatically if none is installed.
-- Node.js 22 or newer and npm, only to build the operator dashboard (`dashboard/`).
-- A `.env` in the repo root, created from `.env.example` with a real LocalStack auth token:
+## Architecture
 
-  ```sh
-  cp .env.example .env   # then set LOCALSTACK_AUTH_TOKEN
-  ```
+```mermaid
+flowchart LR
+    subgraph Device["Wearable (simulator)"]
+        DEK["DEK: device key<br/>(re-enrollment only)"]
+        OLK["OLK: operational leaf key<br/>(mTLS + JWS)"]
+    end
 
-## Local stack
+    subgraph Server["VitalsShield server (Spring Boot, Reactor Netty)"]
+        MTLS["mTLS listener :8443<br/>telemetry ingest, renewal"]
+        PUB["public TLS listener :8444<br/>enroll, re-enroll, CRLs"]
+        ADMIN["admin listener :8445<br/>loopback HTTP, passkey sessions"]
+        SIGNER["Signer (in-process)<br/>issuance, revocation, deny-list,<br/>socket eviction, CRLs"]
+        CLIN["Clinical engine<br/>baselines, drift and acute alerts"]
+    end
 
-```sh
-docker compose up -d          # postgres:16 on host port 5433 (container 5432), LocalStack (KMS only) on 4566
-scripts/kms-probe.sh          # KMS gate: CREATE=ok|fail SIGN=ok|fail SURVIVES_RESTART=skipped
-scripts/kms-probe.sh --restart  # also restarts LocalStack: SURVIVES_RESTART=yes|no (see warning below)
+    KMS[("AWS KMS (LocalStack)<br/>Root CA, Device Intermediate,<br/>Server TLS CA, Registry Anchor")]
+    PG[("PostgreSQL 16<br/>devices, certificates, ledger,<br/>telemetry, alerts, audit chain")]
+    DASH["Operator dashboard<br/>(Next.js static export)"]
+    CLINICIAN(["Clinician<br/>Touch ID passkey"])
+
+    OLK -- "mTLS + JWS batches,<br/>Protocol B renewal" --> MTLS
+    DEK -- "Protocol A enroll,<br/>Protocol C re-enroll" --> PUB
+    MTLS --> SIGNER
+    PUB --> SIGNER
+    MTLS --> CLIN
+    SIGNER -- "Sign (digest only)" --> KMS
+    SIGNER --> PG
+    CLIN --> PG
+    ADMIN --> SIGNER
+    ADMIN --> PG
+    DASH -- "served on :8445" --> ADMIN
+    CLINICIAN -- "WebAuthn step-up" --> DASH
 ```
 
-Changed in Phase 2: the probe restarts LocalStack only with `--restart`. LocalStack runs without persistence, so a
-restart wipes every KMS key, and the next server boot finds the CA keys missing, rebuilds the whole hierarchy, and
-revokes every issued certificate.
+## What is live and what is designed
 
-`nsmithuk/local-kms` is available as a fallback under `docker compose --profile kms-fallback up -d`. It does not start by default.
+A three-column table in spec v2 Section 8 sorts every component into "Live (tested)", "Live (manual verification)"
+and "Designed". In short:
+- **Live:** the KMS-backed PKI, mTLS with per-request status and live socket eviction, JWS telemetry with a 64-bit
+  replay window, Protocols A, B and C, three clone traps, passkey-approved provisioning and actions, the clinical
+  engine with lineage-tracked retraction, and the hash-chained audit log.
+- **Live, manually verified:** real Touch ID.
+- **Designed, not built:** CA failover, Redis, S3 Object Lock anchoring, attestation verification, and HSM custody
+  with IAM isolation.
+
+[`docs/TRACEABILITY.md`](docs/TRACEABILITY.md) maps each live claim to the test or record that proves it.
+
+## Quickstart
+
+Prerequisites: Docker with Compose v2, JDK 21 (Gradle downloads a Java 21 toolchain if needed), Node.js 22 or newer
+with npm, OpenSSL 3. Host ports 5433, 4566 and 8443 to 8445 must be free.
+
+```sh
+cp .env.example .env                       # then set LOCALSTACK_AUTH_TOKEN (LocalStack Pro, KMS)
+docker compose up -d                       # Postgres 16 on 5433, LocalStack KMS on 4566
+./gradlew :simulator:installDist           # simulator binary
+(cd dashboard && npm ci && npm run build)  # dashboard, served by the server on :8445
+
+caffeinate -dimsu ./gradlew :server:bootRun --args='--spring.profiles.active=demo'   # terminal A
+scripts/stage/00-prestage.sh               # terminal B: every line must be PASS
+
+./gradlew -q :server:seedDemoDevice --args="--device-id dev_quickstart_001 --patient-id patient-quickstart-001"
+scripts/stage/02-enroll.sh dev_quickstart_001 <BOOTSTRAP_TOKEN from the line above>
+simulator/build/install/simulator/bin/simulator run --device-id dev_quickstart_001 --count 5
+```
+
+Then open `http://localhost:8445` (use localhost, not 127.0.0.1: it is the passkey RP id). Register the first passkey
+with the code in `var/admin/setup-code`.
+
+Warnings:
+- LocalStack keeps no state across restarts. `docker compose stop`, `down` or `restart`, and
+  `scripts/kms-probe.sh --restart`, all wipe the KMS keys. The next boot then rebuilds the CA hierarchy and revokes
+  every device.
+- `scripts/stage/01-reset.sh` drops the Compose database volume. That is the only reset, because the audit log is
+  append-only.
+- On macOS, keep the lid open: with the demo profile's 3-minute leaves, a sleep longer than about a minute expires a
+  streaming device's certificate (the simulator then recovers through Protocol C).
+
+The `demo` profile (PT3M leaves, traps on) is for stage runs. `local` (PT4M leaves) is for development and tests, and
+the default profile (12 h leaves, no hierarchy rebuild) is the production setting.
+
+## Demo
+
+- [`docs/DEMO_RUNBOOK.md`](docs/DEMO_RUNBOOK.md): T-60, T-15 and T-2 checklists, the 5-minute script, and the timed
+  rehearsal record.
+- [`docs/demo-fallback.md`](docs/demo-fallback.md): the same nine beats as a static walkthrough with real screenshots
+  and outputs, for when the live stack is down (`scripts/stage/99-panic.sh`).
+- [`docs/QA_DRILL.md`](docs/QA_DRILL.md): about 35 judge questions with answers and evidence.
 
 ## Tests
 
-| Task | Runs |
+| Task | What it runs | Needs |
+|---|---|---|
+| `./gradlew test` | unit tests (untagged), including the demo-profile config check | nothing (passes with `DOCKER_HOST=unix:///nonexistent.sock`) |
+| `./gradlew integrationTest` | `@Tag("integration")`: real listeners, Testcontainers Postgres, LocalStack KMS | Docker, the Compose LocalStack |
+| `./gradlew e2eTest` | `@Tag("e2e")`: six end-to-end flows, including `NormalOperationNoAnomalyE2E` (traps on, zero false positives allowed) | Docker, the Compose LocalStack |
+| `./gradlew drillTest` | `@Tag("drill")`: the LocalStack restart drill | Docker; it wipes the KMS keys, so never run it before a demo |
+
+The regression gate before every commit is `./gradlew test e2eTest`. CI (`.github/workflows/ci.yml`) runs
+`./gradlew test` on Java 21, then `npm ci`, typecheck, lint and build for the dashboard. It runs no integration or e2e
+jobs, because those need a LocalStack token that must never be in CI.
+
+## Security model
+
+- **KMS custody:** the CA keys exist only in KMS, and every certificate and CRL signature is a KMS Sign call. A registry
+  key (Key #4) signs the device and passkey registries, so a database edit cannot forge a device's key or a
+  clinician's passkey.
+- **Short-lived leaves:** device certificates last 12 hours (3 minutes in the demo) and renew themselves at two thirds
+  of their life. Every serial the CA signs is recorded in a ledger or voided.
+- **Revocation in three layers:** an in-memory deny-list at the handshake, a database status check on every request,
+  and live socket eviction. A backstop poller re-enforces any revocation within 3 s. CRLs are the published record.
+- **Signed telemetry:** each batch is a JWS signed by the key of the connection's certificate. The ingest CTE rejects
+  replays with a 64-bit sliding window per device and boot epoch, and an idempotent retry is answered without being
+  stored twice.
+- **Clone detection without data loss:**
+  - three traps: a re-enroll collision, sequence regression, and post-drain use;
+  - any trap revokes every certificate and sets REAUTH_REQUIRED;
+  - telemetry is untouched;
+  - a clinician restores or quarantines.
+- **Human approval:** provisioning, quarantine and restore each need a passkey step-up bound to the exact action.
+  Every security event goes into a hash-chained, append-only audit log.
+
+Residual risks (offline clone window, software device key, rooted firmware, unvalidated clinical thresholds,
+plain-HTTP loopback admin plane, in-memory sessions) are listed in spec v2 "Residual risks".
+
+## Docs map
+
+| Document | What it is |
 |---|---|
-| `./gradlew test` | Unit tests only (excludes the `integration`, `e2e`, `drill` tags). Needs no Docker. |
-| `./gradlew integrationTest` | `@Tag("integration")`: KMS, PKI, and listener tests against the Compose LocalStack, each with a Testcontainers postgres:16 and listeners on free ports. |
-| `./gradlew e2eTest` | `@Tag("e2e")`: end-to-end flows, 6 since Phase 10a, including `NormalOperationNoAnomalyE2E` (traps on, normal device behavior, zero security alerts allowed, DECISIONS 100). |
-| `./gradlew drillTest` | `@Tag("drill")`: failure and recovery drills (none yet). |
+| [`docs/vitalsshield_technical_architecture_specification_v2.md`](docs/vitalsshield_technical_architecture_specification_v2.md) | The specification as built, with every deviation marked `[Dnn]` |
+| [`docs/vitalsshield_technical_architecture_specification.md`](docs/vitalsshield_technical_architecture_specification.md) | Spec v1, kept unchanged for history |
+| [`docs/DECISIONS.md`](docs/DECISIONS.md) | Every design decision and deviation, numbered |
+| [`docs/TRACEABILITY.md`](docs/TRACEABILITY.md) | Each spec claim mapped to the test or record that proves it |
+| [`docs/CLOCK_INVENTORY.md`](docs/CLOCK_INVENTORY.md) | Every timestamp comparison and which clock it uses |
+| [`docs/QA_DRILL.md`](docs/QA_DRILL.md) | Judge questions, answers and evidence |
+| [`docs/RELEASE_CHECK.md`](docs/RELEASE_CHECK.md) | History scan for secrets before publishing |
+| [`docs/PRESTAGE_CHECKLIST.md`](docs/PRESTAGE_CHECKLIST.md) | Everything to check before a demo |
+| [`docs/learning/README.md`](docs/learning/README.md) | Phase-by-phase learning notes, glossary |
 
-To prove the unit tier needs no Docker, point it at a socket that does not exist and leave the Compose stack running:
+## License
 
-```sh
-DOCKER_HOST=unix:///nonexistent.sock ./gradlew test --rerun-tasks
-```
-
-Warning: LocalStack keeps no state across restarts. `docker compose stop`, `docker compose down`,
-`docker compose restart localstack`, and `scripts/kms-probe.sh --restart` all wipe every KMS key, and the next server
-boot rebuilds the CA hierarchy and revokes every device certificate.
-
-In VS Code, red "cannot be resolved" errors on imports such as `software.amazon.awssdk.http.urlconnection`,
-`org.testcontainers.postgresql`, or `com.vitalsshield.simulator` while `./gradlew build` passes mean the Java
-extension's cached Gradle model is stale (it can still describe the old Kotlin DSL build). Run
-"Java: Clean Java Language Server Workspace" from the Command Palette. Setting
-`"java.configuration.updateBuildConfiguration": "automatic"` keeps it in sync after that.
-
-## PKI (Phase 1)
-
-- `./gradlew :server:bootRun --args='--spring.profiles.active=local'` reconciles the KMS-backed CA hierarchy, issues the
-  in-memory gateway TLS leaf, loads trust anchors, then exits (no listeners yet). The current Root is published to
-  `var/trust/root-ca.pem`. Only the `local` profile may rebuild the hierarchy (`vitalsshield.pki.allow-hierarchy-rebuild`);
-  every other profile fails startup if a CA key is missing.
-- `python3 scripts/golden_vectors.py` prints the reference hex for the Section 3 canonical encodings used by
-  `CanonicalEncodingsTest`.
-- `PkiOpensslIT` cross-checks certificates and CRLs with OpenSSL 3 (`OPENSSL_BIN`, default
-  `$(brew --prefix openssl@3)/bin/openssl`; skipped if not found) and leaves the PEMs in `build/pki-out/`.
-
-## Listeners (Phase 2)
-
-`bootRun` now stays running. The last boot step binds three listeners, all on `127.0.0.1` by default
-(`vitalsshield.listeners.*`):
-
-| Port | Protocol | Serves |
-| :--- | :--- | :--- |
-| 8443 | TLS 1.3, client certificate required | `/api/v1/telemetry/**`, `/api/v1/devices/renew`, `/api/v1/devices/renew-challenge` |
-| 8444 | TLS 1.3, no client certificate | enrollment routes (later), `/api/v1/pki/intermediate-crl.pem`, `/api/v1/pki/root-crl.pem` |
-| 8445 | plain HTTP, always 127.0.0.1 | `/api/v1/admin/**`, and from Phase 5 the operator dashboard (every other GET/HEAD path) |
-
-Any other path on a port returns 404 with an empty body. Stop the server with Ctrl-C. `ResumptionIT` needs
-OpenSSL 3 (`OPENSSL_BIN`, default `$(brew --prefix openssl@3)/bin/openssl`).
-
-## Stage runs: the demo profile (Phase 10a)
-
-Every rehearsal and the live demo use the `demo` profile (DECISIONS 99). It extends `local` and pins the stage values:
-PT3M leaves (since Phase 10a.1: renewal about 60 s after issuance, expiry about 120 s after), PT60S grace, a 10-batch calibration, challenge rate limits of 60/min per address and 300/min overall,
-and every trap on.
-
-```sh
-caffeinate -dimsu ./gradlew :server:bootRun --args='--spring.profiles.active=demo'
-scripts/stage/00-prestage.sh      # PASS/FAIL per check, non-zero exit on any FAIL
-```
-
-`scripts/stage/` holds the numbered stage scripts (reset, enroll, stream, drift, clone, recover, panic).
-`docs/DEMO_RUNBOOK.md` is the T-60/T-15/T-2 checklist and the 5-minute script. `docs/demo-fallback.md` is the static
-walkthrough to use if the live stack is down. `local` stays the profile for development and tests.
-
-## Operator dashboard (Phase 5)
-
-The dashboard is a Next.js static export served by the server itself, only on the admin port.
-
-```sh
-cd dashboard && npm ci && npm run build   # writes dashboard/out (gitignored)
-./gradlew :server:bootRun --args='--spring.profiles.active=local'
-open http://localhost:8445/               # Phase 6: first run registers a passkey with var/admin/setup-code
-```
-
-If `dashboard/out` does not exist, `/` on 8445 answers `dashboard not built: run npm run build in dashboard/`. The
-directory is `vitalsshield.dashboard.dir`. For UI work, `npm run dev` serves on port 3000 and proxies `/api/*` to
-8445. Checks: `npm run typecheck`, `npm run lint`.
-
-## Simulator
-
-Build the binary once, then run it from the repo root (it resolves `simulator-state/` and `var/trust/root-ca.pem`
-relative to the current directory):
-
-```sh
-./gradlew :simulator:installDist
-simulator/build/install/simulator/bin/simulator enroll --device-id dev_wearable_019 --token <token>
-simulator/build/install/simulator/bin/simulator run --device-id dev_wearable_019
-```
-
-Demos use this binary, never `./gradlew :simulator:run`: after a quarantine the simulator exits with code 3 by design,
-and Gradle reports a non-zero exit as `BUILD FAILED`. `scripts/demo-cli.sh` runs the whole CLI demo (seed, enroll,
-stream, quarantine, CRL check); set `DEMO_QUARANTINE=ui` to click the dashboard button instead of using curl, and
-`DEMO_PAUSE` to change the 2 s pause between steps.
-
-## Admin plane (Phase 6)
-
-`vitalsshield.admin.auth` is `webauthn` by default: the dashboard at `http://localhost:8445` signs in with a passkey
-(Touch ID), and provisioning, quarantine, and restore each need a fresh passkey approval of that exact action. The
-setup code in `var/admin/setup-code` only registers the first passkey. `--vitalsshield.admin.auth=bearer` restores the
-Phase 5 setup-code behavior. The manual Touch ID walkthrough is `docs/learning/phase-06-manual-touchid.md`.
-`./gradlew :server:seedDemoDevice` (default `--auth webauthn`) provisions with a software passkey kept in
-`var/devseed/passkey.key`.
-
+MIT, see [`LICENSE`](LICENSE).
