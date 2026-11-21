@@ -67,6 +67,9 @@ export type Renewal = {
   grace_expires_at: string | null;
   grace_ended_at: string | null;
   grace_sockets_closed: number | null;
+  /** The predecessor's current status (RENEWED during grace; REVOKED or EXPIRED once it is final). */
+  old_status: string | null;
+  old_revocation_reason: string | null;
 };
 
 export type Baseline = {

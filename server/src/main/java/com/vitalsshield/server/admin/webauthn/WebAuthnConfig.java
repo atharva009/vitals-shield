@@ -15,9 +15,16 @@ public class WebAuthnConfig {
         return WebAuthnOrigins.forAdminPort(listeners.adminPort(), env.acceptsProfiles(Profiles.of("dashboard-dev")));
     }
 
-    /** DECISIONS #66: DEV_SEED passkeys work only in the local profile. */
+    /**
+     * DECISIONS #66: DEV_SEED passkeys work only in the local profile, and in demo, which extends local (DECISIONS 99).
+     * Phase 10a.1: demo now imports local's file instead of activating the local profile, so it is named here.
+     */
     @Bean
     public DevSeedPolicy devSeedPolicy(Environment env) {
-        return new DevSeedPolicy(env.acceptsProfiles(Profiles.of("local")));
+        return new DevSeedPolicy(devSeedAllowed(env));
+    }
+
+    static boolean devSeedAllowed(Environment env) {
+        return env.acceptsProfiles(Profiles.of("local | demo"));
     }
 }

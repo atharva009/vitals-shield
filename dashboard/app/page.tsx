@@ -923,11 +923,21 @@ export default function Page() {
                 <td>{time(r.issued_at)}</td>
                 <td>{r.activated_at ? time(r.activated_at) : r.new_status === "ISSUED_PENDING_USE" ? "awaiting first batch" : "–"}</td>
                 <td>
-                  {r.grace_ended_at
-                    ? `${time(r.grace_ended_at)}${r.grace_sockets_closed !== null ? ` · ${r.grace_sockets_closed} socket(s) closed` : ""}`
-                    : r.grace_expires_at
-                      ? `in ${secondsLeft(r.grace_expires_at, serverNow, "0 s")}`
-                      : "–"}
+                  {r.old_status === "REVOKED" || r.old_status === "EXPIRED" ? (
+                    // Phase 10a.1: a predecessor that is final (quarantined, swept) shows its status, never a countdown.
+                    <span data-testid="renewal-final-status">
+                      <span className={`${s.chip} ${r.old_status === "REVOKED" ? s.chipDanger : s.chipMuted}`} title={r.old_revocation_reason ?? ""}>
+                        {r.old_status}
+                      </span>
+                      {r.old_status === "EXPIRED" && r.grace_ended_at ? ` grace ended ${time(r.grace_ended_at)}` : ""}
+                    </span>
+                  ) : r.grace_ended_at ? (
+                    `${time(r.grace_ended_at)}${r.grace_sockets_closed !== null ? ` · ${r.grace_sockets_closed} socket(s) closed` : ""}`
+                  ) : r.grace_expires_at ? (
+                    `in ${secondsLeft(r.grace_expires_at, serverNow, "0 s")}`
+                  ) : (
+                    "–"
+                  )}
                 </td>
               </tr>
             ))}

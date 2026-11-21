@@ -51,7 +51,7 @@ RP id is "localhost").
 ## The 5-minute script
 
 Planned times are from the brief; "rehearsal" is when the beat actually started in the timed rehearsal (headless
-Chrome with a virtual authenticator, demo profile, 2026-11-20). A beat that ran long is marked.
+Chrome with a virtual authenticator, demo profile with PT3M leaves, Phase 10a.1). A beat that ran long is marked.
 
 | # | Planned | Rehearsal | What I say | What I do | What the audience should see | If it does not appear |
 |---|---|---|---|---|---|---|
@@ -59,39 +59,42 @@ Chrome with a virtual authenticator, demo profile, 2026-11-20). A beat that ran 
 | 2 | 0:15 | 0:04 (9 s) | "Every certificate here is signed by a key that never leaves AWS KMS. The server cannot copy it." | Scroll to Trust chain. | Root CA, Device Intermediate, Server TLS CA, each with its SKI; the CRL link | Empty chain: the server is still booting; wait for "Boot complete" |
 | 3 | 0:35 | 0:13 (2 s) | "A clinician approves the device with Touch ID. That approval is what makes the device trusted." | Provision `dev_stage_001`, patient `patient-stage-001`, Touch ID. Copy the token. C: `scripts/stage/02-enroll.sh dev_stage_001 <token>` | Token box "Shown once"; C prints `ENROLLED serial=… boot_epoch=1` | `ENROLL_FAILED`: re-provision (the token is single-use) and enroll again |
 | 4 | 1:15 | 0:15 (16 s) | "It streams one signed batch a second. Each one is checked against the certificate on that very connection." | B: `scripts/stage/03-stream.sh dev_stage_001`. Click the device row. | Sockets 1, Last seq rising, baseline CALIBRATING then LOCKED after 10 batches | No rows: look at B; exit 4 or 5 means the enroll in beat 3 did not finish |
-| 5 | 1:45 | 0:31 (85 s, **ran long**) | "Its certificate lives 4 minutes here. It renews itself at two thirds, with no human, and the old one stops working 60 seconds later." | Point at "Next renewal due" on the card, then the Renewal log. | B prints `RENEWED` then `ACTIVATED`; Renewal log row; old serial with a grace countdown | It comes 1m40s after the enroll in beat 3, not at a fixed time: keep talking over beat 4, or do beat 6 first and come back |
-| 6 | 2:05 | 1:56 (5 s) | "Now the readings drift from this patient's own baseline." | C: `scripts/stage/04-drift.sh dev_stage_001` | Within about 5 batches: DRIFT alert "Drift vs baseline v1: HR z=+5.x, HRV z=-3.x, SpO2 z=-2.x over 4 resting batches" | No alert: baseline not LOCKED yet (needs 10 resting batches); wait |
-| 7 | 2:45 | 2:01 (3 s) | "Suppose this device was stolen. One Touch ID revokes it, closes its connection, and retracts what it reported." | Device panel: Quarantine, reason, "Approve quarantine with passkey", Touch ID. | Result "revocation latency … ms … approved by"; B: `REJECTED handshake_refused` and exit 3; the alert struck through; baseline CALIBRATING v2 | Dialog does not close: Touch ID cancelled; press Approve again |
-| 8 | 3:45 | 2:04 (14 s) | "Now someone copies a device's flash and runs both. Neither knows the other exists. The server sees them collide." | C: `scripts/stage/05-clone.sh dev_stage_002`. Click dev_stage_002. Then "Restore (benign reset)", Touch ID. C: `scripts/stage/06-recover.sh dev_stage_002` | Both copies exit 3; REAUTH_REQUIRED panel with SEQUENCE_REGRESSION and two buttons; pinned SECURITY alert; after Restore, `RE-ENROLLED … boot_epoch=2` and 10 batches at 200 | No panel within 5 s: read 05-clone.sh output; if it says "re-enrolling once", wait for it; never run it twice in parallel |
-| 9 | 4:30 | 2:18 (11 s) | "What is real today: KMS-signed certificates, mTLS on every request, live revocation, the three clone traps. What is designed only: a second CA for failover, multi-gateway eviction with Redis, a secure element for the device key. A clone that re-enrolls while the real device is off goes unnoticed until it comes back." | Scroll to the Audit log. | chain valid, 10 entries: passkey, provisioning, DEVICE_QUARANTINED, SECURITY_ANOMALY by system, DEVICE_RESTORED | Nothing to fix: this beat is talk |
+| 5 | 1:45 | 0:31 (45 s) | "Its certificate lives 3 minutes here. It renews itself at two thirds, with no human, and the old one stops working 60 seconds later." | Point at "Next renewal due" on the card, then the Renewal log. | B prints `RENEWED` then `ACTIVATED`; Renewal log row; old serial with a grace countdown | It comes 60 s after the enroll in beat 3 (PT3M, DECISIONS 99): with the enroll at about 0:45 it lands at about 1:45; if beat 3 ran late, keep talking over beat 4 |
+| 6 | 2:05 | 1:16 (5 s) | "Now the readings drift from this patient's own baseline." | C: `scripts/stage/04-drift.sh dev_stage_001` | Within about 5 batches: DRIFT alert "Drift vs baseline v1: HR z=+4.x, HRV z=-3.x, SpO2 z=-2.x over 4 resting batches" | No alert: baseline not LOCKED yet (needs 10 resting batches); wait |
+| 7 | 2:45 | 1:21 (6 s) | "Suppose this device was stolen. One Touch ID revokes it, closes its connection, and retracts what it reported." | Device panel: Quarantine, reason, "Approve quarantine with passkey", Touch ID. | Result "revocation latency … ms … approved by"; B: `REJECTED handshake_refused` and exit 3; the alert struck through; baseline CALIBRATING v2 | Dialog does not close: Touch ID cancelled; press Approve again |
+| 8 | 3:45 | 1:28 (13 s) | "Now someone copies a device's flash and runs both. Neither knows the other exists. The server sees them collide." | C: `scripts/stage/05-clone.sh dev_stage_002`. Click dev_stage_002. Then "Restore (benign reset)", Touch ID. C: `scripts/stage/06-recover.sh dev_stage_002` | Both copies exit 3; REAUTH_REQUIRED panel with SEQUENCE_REGRESSION and two buttons; pinned SECURITY alert; after Restore, `RE-ENROLLED … boot_epoch=2` and 10 batches at 200 | No panel within 5 s: read 05-clone.sh output; if it says "re-enrolling once", wait for it; never run it twice in parallel |
+| 9 | 4:30 | 1:41 (11 s) | "What is real today: KMS-signed certificates, mTLS on every request, live revocation, the three clone traps. What is designed only: a second CA for failover, multi-gateway eviction with Redis, a secure element for the device key. A clone that re-enrolls while the real device is off goes unnoticed until it comes back." | Scroll to the Audit log. | chain valid, 10 entries: passkey, provisioning, DEVICE_QUARANTINED, SECURITY_ANOMALY by system, DEVICE_RESTORED | Nothing to fix: this beat is talk |
 
 ## Rehearsal record
 
-Rehearsed on 2026-11-20 at 19:15 to 19:18 EST (2026-11-21 00:15 to 00:18 UTC) by `scripts/rehearsal/rehearse.mjs`: headless Chrome 1440x900, a CDP
-virtual authenticator for every Touch ID step, the stage scripts above, the demo profile, after
-`scripts/stage/01-reset.sh`. It was the fourth run. Runs 1 to 3 found the clone-drill bug, the screenshot problems and
-the alerts-table overflow listed in the Phase 10a report.
+Rehearsed again in Phase 10a.1, on 2026-11-20 at 20:06 to 20:08 EST (2026-11-21 01:06 to 01:08 UTC), by
+`scripts/rehearsal/rehearse.mjs`. That means headless Chrome at 1440x900, a CDP virtual authenticator for every Touch ID
+step, the stage scripts above, and the demo profile with PT3M leaves, all after `scripts/stage/01-reset.sh`.
 
-- T-15 steps (passkey, `dev_precheck_001` with 5 batches at 200, `dev_stage_002` enrolled) and
-  `00-prestage.sh` (all PASS) ran before the clock started.
-- The automated run took **2:30** for all nine beats, because it does not talk. Spoken, the beats fit the 5-minute plan
-  except one.
-- **Beat 5 (rollover) ran long: 85 s** of waiting. The renewal is due 1m40s after the leaf is issued (DECISIONS 83),
-  so it lands 1m40s after beat 3's enroll, not at 1:45 on the clock. Spoken, with the enroll at about 0:45, the
-  rollover arrives at about 2:25. Plan to cover it in beat 4, or run beat 6 first and come back to the Renewal log.
-- Beat 8 needed one Protocol C refresh before cloning. `dev_stage_002`'s leaf, enrolled at T-15, was past its renewal
-  time ("leaf renewal due in -26 s"), so 05-clone.sh re-enrolled it once. The trap then fired after the clone's third
-  batch, about 1 s after both copies started.
-- Console messages: none. Page exceptions: none. Horizontal overflow at 1440 px: none.
+- T-15 steps (passkey, `dev_precheck_001` with 5 batches at 200, `dev_stage_002` enrolled) and `00-prestage.sh` (all
+  PASS, `profiles=demo`) ran before the clock started.
+- The automated run took **1:52** for all nine beats, because it does not talk. In Phase 10a, with PT4M leaves, it
+  took 2:30.
+- **Beat 5 no longer runs long.** The renewal is due 60 s after the leaf is issued (PT3M with the 60 s backdate,
+  DECISIONS 83, 99). It landed at 1:16, exactly 60 s after beat 3's enroll; the 45 s in the table is the driver
+  waiting, because it does not talk. Spoken, with the enroll at about 0:45, the rollover arrives at about 1:45, the
+  planned time. In Phase 10a (PT4M) the wait was 85 s, and spoken it would have landed at about 2:25.
+- Beat 8 needed one Protocol C refresh before cloning ("leaf renewal due in -29 s"): `dev_stage_002` was enrolled at
+  T-15. The trap then fired on the clone's third batch, about 1 s after both copies started.
+- After beat 7 the driver checks that the quarantined device's renewal log row shows the predecessor's final status
+  with no countdown. It got `dev_stage_001 3C2D56A36999A355… 6D392D24038B5A0E…revoked 8:08:13 PM 8:08:13 PM
+  REVOKED`: pass.
+- Console messages: none. Page exceptions: none. Overflow: none, checked on every screenshot against the page width
+  and against every panel's own bounds (no section scrolls sideways, no table or row past its panel's border).
 
 | Beat | Started | Took | Result line |
 |---|---|---|---|
 | 1 problem | 0:00 | 4 s | dashboard landing, signed in |
 | 2 trust chain | 0:04 | 9 s | CRL #1, 0 entries; 4 ACTIVE KMS keys |
-| 3 provisioning + enroll | 0:13 | 2 s | `ENROLLED serial=2f7b5063affc16dde4a2de0c8b1c9e96b3763a2b boot_epoch=1 not_after=2026-11-21T00:19:12Z` |
+| 3 provisioning + enroll | 0:13 | 2 s | `ENROLLED serial=3c2d56a36999a35526156a8a033a009ec84814d9 boot_epoch=1 not_after=2026-11-21T01:09:13Z` |
 | 4 streaming | 0:15 | 16 s | baseline LOCKED after 16 batches |
-| 5 rollover | 0:31 | **85 s** | `RENEWED old=2F7B5063… new=19150614… at=00:17:52.333Z`, `ACTIVATED … at=00:17:52.357Z` |
-| 6 drift | 1:56 | 5 s | DRIFT alert "HR z=+5.3, HRV z=-3.8, SpO2 z=-2.4 over 4 resting batches" |
-| 7 quarantine | 2:01 | 3 s | 2 certs revoked, 1 socket closed, 12.6 ms, 104 batches quarantined; simulator exit 3 |
-| 8 clone + restore | 2:04 | 14 s | SEQUENCE_REGRESSION, both copies exit 3; restored; `RE-ENROLLED serial=775AB2F6… boot_epoch=2` |
-| 9 close | 2:18 | 11 s | audit chain valid, 10 entries |
+| 5 rollover | 0:31 | 45 s | `RENEWED old=3C2D56A3… new=6D392D24… at=01:08:13.545Z`, `ACTIVATED … at=01:08:13.566Z` |
+| 6 drift | 1:16 | 5 s | DRIFT alert "HR z=+4.8, HRV z=-3.8, SpO2 z=-2.6 over 4 resting batches" |
+| 7 quarantine | 1:21 | 6 s | 2 certs revoked, 1 socket closed, 8.7 ms, 65 batches quarantined; simulator exit 3 |
+| 8 clone + restore | 1:28 | 13 s | SEQUENCE_REGRESSION, both copies exit 3; restored; `RE-ENROLLED serial=679A794D… boot_epoch=2` |
+| 9 close | 1:41 | 11 s | audit chain valid, 10 entries |

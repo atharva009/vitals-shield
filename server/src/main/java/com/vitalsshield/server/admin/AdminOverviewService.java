@@ -474,7 +474,7 @@ public class AdminOverviewService {
                        n.activated_at, n.status::text AS new_status, n.revocation_reason AS new_reason,
                        n.issued_via, n.reenroll_reason,
                        o.serial_number AS old_serial, o.issuer_key_hash AS old_issuer, o.grace_expires_at,
-                       o.status::text AS old_status
+                       o.status::text AS old_status, o.revocation_reason AS old_reason
                   FROM certificates n
                   LEFT JOIN certificates o ON o.device_id = n.device_id AND o.serial_number = n.superseded_serial
                  WHERE n.superseded_serial IS NOT NULL
@@ -489,6 +489,10 @@ public class AdminOverviewService {
             String oldSerial = rs.getString("old_serial");
             r.put("old_serial_display", oldSerial == null ? null : SerialDisplayFormat.toOpenSslHex(oldSerial));
             r.put("new_serial_display", SerialDisplayFormat.toOpenSslHex(rs.getString("new_serial")));
+            // Phase 10a.1: the predecessor's own status. A REVOKED or EXPIRED predecessor (quarantine, sweep) shows its
+            // final status on the dashboard, never a grace countdown.
+            r.put("old_status", rs.getString("old_status"));
+            r.put("old_revocation_reason", rs.getString("old_reason"));
             r.put("new_status", rs.getString("new_status"));
             r.put("new_revocation_reason", rs.getString("new_reason"));
             r.put("issued_at", rs.getTimestamp("issued_at").toInstant().toString());

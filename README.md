@@ -82,7 +82,7 @@ OpenSSL 3 (`OPENSSL_BIN`, default `$(brew --prefix openssl@3)/bin/openssl`).
 ## Stage runs: the demo profile (Phase 10a)
 
 Every rehearsal and the live demo use the `demo` profile (DECISIONS 99). It extends `local` and pins the stage values:
-PT4M leaves, PT60S grace, a 10-batch calibration, challenge rate limits of 60/min per address and 300/min overall,
+PT3M leaves (since Phase 10a.1: renewal about 60 s after issuance, expiry about 120 s after), PT60S grace, a 10-batch calibration, challenge rate limits of 60/min per address and 300/min overall,
 and every trap on.
 
 ```sh

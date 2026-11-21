@@ -79,7 +79,16 @@ const contrast = (on) => evaluate(`(() => { const l=[...document.querySelectorAl
 const overflow = [];
 async function shots(name) { await sleep(300);
   const w = await evaluate("document.documentElement.scrollWidth");
-  if (w > 1440) overflow.push(`${name}: scrollWidth ${w}`);
+  if (w > 1440) overflow.push(`${name}: page scrollWidth ${w}`);
+  // Phase 10a.1: every panel's own bounds, not just the page: no section scrolls sideways and no table or row
+  // reaches past its panel's border.
+  const panels = await evaluate(`[...document.querySelectorAll('section')].flatMap(sec => {
+    const r = sec.getBoundingClientRect(); const out = [];
+    if (sec.scrollWidth > sec.clientWidth + 1) out.push((sec.querySelector('h2')?.textContent || 'section') + ': scrollWidth ' + sec.scrollWidth + ' > ' + sec.clientWidth);
+    sec.querySelectorAll('table, tr').forEach(t => { const b = t.getBoundingClientRect();
+      if (b.width > 0 && b.right > r.right - 1) out.push((sec.querySelector('h2')?.textContent || 'section') + ': ' + t.tagName + ' right ' + Math.round(b.right) + ' > panel ' + Math.round(r.right)); });
+    return out; }).filter((v, i, a) => a.indexOf(v) === i)`);
+  for (const p of panels ?? []) overflow.push(`${name}: ${p}`);
   await shot(`stage-${name}.png`); await contrast(true); await sleep(400);
   await shot(`stage-${name}-hc.png`); await contrast(false); await sleep(200); }
 async function provision(dev, patient) {
@@ -90,7 +99,7 @@ async function provision(dev, patient) {
   await waitFor(`document.querySelector('[class*=tokenRow] code')?.textContent?.length > 20 && document.body.innerText.includes(${JSON.stringify("for " + dev)})`, 15000);
   return evaluate("document.querySelector('[class*=tokenRow] code')?.textContent");
 }
-const beats = []; let T0 = 0;
+const beats = []; const assertions = []; let T0 = 0;
 const t = () => ((Date.now() - T0) / 1000);
 const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 async function beat(n, title, planned, fn) {
@@ -155,6 +164,13 @@ await beat(7, "Touch ID quarantine", "2:45", async () => {
   save("quarantine.json", q);
   await waitFor(bodyHas("RETRACTED_BY_QUARANTINE"), 8000);
   await scrollTo(h2("dev_stage_001")); await shots("07-quarantine");
+  // Phase 10a.1: the renewal log row of the quarantined device shows the predecessor's final status, no countdown.
+  await sleep(1500);
+  const renewalRow = await evaluate(`[...document.querySelectorAll('[data-testid=renewal-log] tbody tr')].find(r => r.children[0]?.textContent.includes('dev_stage_001'))?.innerText.replace(/\\s+/g,' ')`);
+  assertions.push({ check: "revoked predecessor shows its final status, no grace countdown", row: renewalRow,
+    pass: !!renewalRow && renewalRow.includes("REVOKED") && !/\bin \d/.test(renewalRow) });
+  await scrollTo(`document.querySelector('[data-testid=renewal-log]')?.closest('section')`); await shots("07b-renewal-log-after-quarantine");
+  await scrollTo(h2("Clinical alerts")); await shots("07c-alerts-after-quarantine");
   await new Promise((r) => (stream.exitCode !== null ? r() : stream.on("exit", r)));
   save("stream-dev_stage_001.txt", streamLog);
   return `approved=${ok} simulator: ${streamLog.trim().split("\n").slice(-2).join(" | ")}`; });
@@ -180,6 +196,6 @@ save("psql-after.txt", psql("SELECT device_id, trust_state, boot_epoch, last_seq
   psql("SELECT sequence_id, event_type, actor_id, payload_json->>'device_id' AS device FROM security_audit_log ORDER BY sequence_id"));
 const consoleMsgs = events.filter((e) => e.method === "Runtime.consoleAPICalled").map((e) => `${e.params.type}: ${e.params.args.map((a) => a.value ?? a.description).join(" ")}`);
 const exceptions = events.filter((e) => e.method === "Runtime.exceptionThrown").map((e) => e.params.exceptionDetails.exception?.description ?? e.params.exceptionDetails.text);
-console.log("REPORT " + JSON.stringify({ signedIn, total: fmt(t()), beats, overflow, console: consoleMsgs, exceptions }, null, 2));
+console.log("REPORT " + JSON.stringify({ signedIn, total: fmt(t()), beats, overflow, assertions, console: consoleMsgs, exceptions }, null, 2));
 ws.close(); chrome.kill();
 process.exit(0);

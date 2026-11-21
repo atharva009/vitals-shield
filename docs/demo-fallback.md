@@ -1,8 +1,8 @@
 # VitalsShield demo: static walkthrough
 
 Use this if the live stack is down (`scripts/stage/99-panic.sh`). Every screenshot and output below is real. They come
-from the timed rehearsal of `docs/DEMO_RUNBOOK.md` on 2026-11-20 (19:15 to 19:18 EST). That run used the demo profile
-(DECISIONS 99): LocalStack KMS, 4-minute device certificates, every clone trap on. A headless Chrome at 1440x900 with a
+from the timed rehearsal of `docs/DEMO_RUNBOOK.md` on 2026-11-20 (20:06 to 20:08 EST, Phase 10a.1). That run used
+the demo profile (DECISIONS 99): LocalStack KMS, 3-minute device certificates, every clone trap on. A headless Chrome at 1440x900 with a
 virtual authenticator stood in for Touch ID. Each screenshot links to its high-contrast version. Bootstrap tokens are
 blanked in every image.
 
@@ -19,10 +19,10 @@ a copied key is stopped.
 **Evidence** (`scripts/stage/00-prestage.sh`, just before the run):
 
 ```
-PASS  Server on 8445 with demo profile       profiles=demo,local
+PASS  Server on 8445 with demo profile       profiles=demo
 PASS  Boot status has all steps              all 8 steps
 PASS  KMS health HEALTHY                     kms_state=HEALTHY
-PASS  Clock skew under 2 s                   skew_ms=-1 state=GREEN
+PASS  Clock skew under 2 s                   skew_ms=-3 state=GREEN
 PRESTAGE: all checks PASS
 ```
 
@@ -39,10 +39,10 @@ certificate and CRL signature is a KMS Sign call, and no CA key is ever in the s
 ```
        purpose       | status | key_id_suffix
 ---------------------+--------+---------------
- ROOT_CA             | ACTIVE | 9ecf2e0b98d5
- DEVICE_INTERMEDIATE | ACTIVE | efd0d2eebfa8
- SERVER_TLS_CA       | ACTIVE | 8794752a6cf2
- REGISTRY_ANCHOR     | ACTIVE | 34d48cc96343
+ ROOT_CA             | ACTIVE | 1bca05edd742
+ DEVICE_INTERMEDIATE | ACTIVE | 220dfed707cb
+ SERVER_TLS_CA       | ACTIVE | 63fdbfff1bc2
+ REGISTRY_ANCHOR     | ACTIVE | 151e18c2e906
 ```
 
 The Device Intermediate's CRL at this point (`openssl crl -noout -text`):
@@ -52,8 +52,8 @@ Certificate Revocation List (CRL):
     Version 2 (0x1)
     Signature Algorithm: ecdsa-with-SHA256
     Issuer: O=VitalsShield, CN=VitalsShield Issuing CA G1
-    Last Update: Nov 21 00:15:49 2026 GMT
-    Next Update: Nov 22 00:15:49 2026 GMT
+    Last Update: Nov 21 01:06:50 2026 GMT
+    Next Update: Nov 22 01:06:50 2026 GMT
     CRL extensions:
         X509v3 CRL Number:
             1
@@ -74,7 +74,7 @@ server records the DEK under a KMS Key #4 signature.
 ```
 == VitalsShield stage: 02 enroll dev_stage_001 ==
 FACTORY_WIPED simulator-state/dev_stage_001
-ENROLLED serial=2f7b5063affc16dde4a2de0c8b1c9e96b3763a2b boot_epoch=1 not_after=2026-11-21T00:19:12Z
+ENROLLED serial=3c2d56a36999a35526156a8a033a009ec84814d9 boot_epoch=1 not_after=2026-11-21T01:09:13Z
 ```
 
 ## 4. Streaming
@@ -91,8 +91,8 @@ resting baseline locks after 10 resting batches.
 ```
 == VitalsShield stage: 03 stream dev_stage_001 (Ctrl-C to stop) ==
 SCENARIO resting
-SENT seq=1 batch=d500fdf8 status=200 rtt_ms=95 measured_at=2026-11-20T12:16:12.801101Z scenario=resting trust_state=ACCEPTED
-SENT seq=20 batch=0515150a status=200 rtt_ms=10 measured_at=2026-11-20T12:35:12.801101Z scenario=resting trust_state=ACCEPTED
+SENT seq=1 batch=dbcd3118 status=200 rtt_ms=90 measured_at=2026-11-20T13:07:14.172429Z scenario=resting trust_state=ACCEPTED
+SENT seq=20 batch=c4afff1e status=200 rtt_ms=18 measured_at=2026-11-20T13:26:14.172429Z scenario=resting trust_state=ACCEPTED
 ```
 
 ## 5. Automatic certificate rollover
@@ -100,18 +100,18 @@ SENT seq=20 batch=0515150a status=200 rtt_ms=10 measured_at=2026-11-20T12:35:12.
 ![Rollover](learning/img/stage-05-rollover.png)
 ([high contrast](learning/img/stage-05-rollover-hc.png))
 
-**What it proves.** The 4-minute certificate renews itself at two thirds of its life with no human (Protocol B). The new
+**What it proves.** The 3-minute certificate renews itself 60 s after issuance, at two thirds of its validity with no human (Protocol B). The new
 certificate becomes active on its first accepted batch. The old one is accepted for a 60-second grace and then refused.
 
 **Evidence** (same stream):
 
 ```
-RENEWED old=2F7B5063AFFC16DDE4A2DE0C8B1C9E96B3763A2B new=191506149A812043EE93CD1BB4D31D4223E3D9DA due_at=2026-11-21T00:17:52Z at=2026-11-21T00:17:52.333666Z
-ACTIVATED new=191506149A812043EE93CD1BB4D31D4223E3D9DA at=2026-11-21T00:17:52.357493Z
+RENEWED old=3C2D56A36999A35526156A8A033A009EC84814D9 new=6D392D24038B5A0E9DBBE380D013DC387973DA51 due_at=2026-11-21T01:08:13Z at=2026-11-21T01:08:13.544885Z
+ACTIVATED new=6D392D24038B5A0E9DBBE380D013DC387973DA51 at=2026-11-21T01:08:13.566112Z
 ```
 
-24 ms from renewal to first use. In the 30-minute soak on the same profile (Phase 10a), 18 renewals took 25.7 ms to
-70.7 ms to activate, median 40.2 ms, with all 1800 batches accepted.
+21 ms from renewal to first use, 60 s after the enroll. In the 10-minute soak on the same PT3M profile (Phase 10a.1),
+10 renewals, one a minute, took 23.3 ms to 41.7 ms to activate (median 32.3 ms), and all 600 batches were accepted.
 
 ## 6. Drift alert
 
@@ -124,7 +124,7 @@ breaches. Every alert records the batches and the baseline version it was comput
 **Evidence** (`scripts/stage/04-drift.sh dev_stage_001`, then on the dashboard):
 
 ```
-DRIFT   Drift vs baseline v1: HR z=+5.3, HRV z=-3.8, SpO2 z=-2.4 over 4 resting batches   4 batches   v1   ACTIVE
+DRIFT   Drift vs baseline v1: HR z=+4.8, HRV z=-3.8, SpO2 z=-2.6 over 4 resting batches   4 batches   v1   ACTIVE
 ```
 
 ## 7. Touch ID quarantine
@@ -146,11 +146,11 @@ operation:
 ```json
 {
   "device_id": "dev_stage_001",
-  "at": "2026-11-21T00:17:59.013812Z",
+  "at": "2026-11-21T01:08:20.454323Z",
   "certs_revoked": 2,
   "channels_closed": 1,
-  "revocation_latency_micros": 12621,
-  "batches_quarantined": 104,
+  "revocation_latency_micros": 8674,
+  "batches_quarantined": 65,
   "baselines_reset": 1,
   "alerts_retracted": 1
 }
@@ -160,9 +160,18 @@ The stream, a second later:
 
 ```
 SCENARIO drift
-REJECTED handshake_refused last_ok_seq=104 ms_since_last_ok=1031
+REJECTED handshake_refused last_ok_seq=65 ms_since_last_ok=1017
 simulator exit 3 (0 done, 3 refused/revoked, 4 expired and unrecoverable, 5 REAUTH_REQUIRED)
 ```
+
+The renewal log right after: the quarantined device's predecessor shows its final status, REVOKED, not a grace
+countdown (Phase 10a.1), and the alerts panel shows the drift alert retracted. Both stay inside their panels at 1440 px.
+
+![Renewal log after quarantine](learning/img/stage-07b-renewal-log-after-quarantine.png)
+([high contrast](learning/img/stage-07b-renewal-log-after-quarantine-hc.png))
+
+![Alerts after quarantine](learning/img/stage-07c-alerts-after-quarantine.png)
+([high contrast](learning/img/stage-07c-alerts-after-quarantine-hc.png))
 
 ## 8. Clone drill and Touch ID restore
 
@@ -188,25 +197,25 @@ tries the same later presents the old epoch and is refused (shown in Phase 9's C
 **Evidence** (`scripts/stage/05-clone.sh dev_stage_002`):
 
 ```
-leaf renewal due in -26 s (or already expired): re-enrolling once before cloning
-RE-ENROLLED serial=29B14C0A8E74360FCC9B3736CCE3E66B7F74E3F6 boot_epoch=1 reason=manual at=2026-11-21T00:18:02.216724Z
+leaf renewal due in -29 s (or already expired): re-enrolling once before cloning
+RE-ENROLLED serial=197444201A1E71A51FB3F27E2855D4C7D7B946BD boot_epoch=1 reason=manual at=2026-11-21T01:08:27.239422Z
 CLONED simulator-state/dev_stage_002 -> simulator-state-clone/dev_stage_002
-SENT seq=1 batch=faca5b7f status=200 rtt_ms=114 ... trust_state=ACCEPTED
-SENT seq=2 batch=7dd77b14 status=200 rtt_ms=12 ... trust_state=ACCEPTED
-SENT seq=3 batch=e4b10e61 status=409 rtt_ms=15 ... error=DUPLICATE_SEQUENCE_REPLAY
-REJECTED handshake_refused last_ok_seq=2 ms_since_last_ok=1065
+SENT seq=1 batch=68036c78 status=409 rtt_ms=110 ... error=DUPLICATE_SEQUENCE_REPLAY
+SENT seq=2 batch=0e81b176 status=409 rtt_ms=11 ... error=DUPLICATE_SEQUENCE_REPLAY
+SENT seq=3 batch=2f40d519 status=409 rtt_ms=9 ... error=DUPLICATE_SEQUENCE_REPLAY
+REJECTED handshake_refused last_ok_seq=0 ms_since_last_ok=1718
 clone exit 3; original exit 3; original's last lines:
-SENT seq=2 batch=bc7d7185 status=409 rtt_ms=6 ... error=DUPLICATE_SEQUENCE_REPLAY
-SENT seq=3 batch=4dbc73df status=200 rtt_ms=10 ... trust_state=ACCEPTED
-REJECTED handshake_refused last_ok_seq=3 ms_since_last_ok=1560
+SENT seq=2 batch=459c1e35 status=200 rtt_ms=8 ... trust_state=ACCEPTED
+SENT seq=3 batch=e91e41ce status=200 rtt_ms=15 ... trust_state=ACCEPTED
+REJECTED handshake_refused last_ok_seq=3 ms_since_last_ok=524
 ```
 
 After "Restore (benign reset)" (`scripts/stage/06-recover.sh dev_stage_002`):
 
 ```
-RE-ENROLLED serial=775AB2F6F7D5D5FB31B43989F84AB7D75F14D18E boot_epoch=2 reason=manual previous_boot_epoch=1 at=2026-11-21T00:18:08.437745Z
-SENT seq=5 batch=cd3459b2 status=200 rtt_ms=86 ... trust_state=ACCEPTED
-SENT seq=14 batch=c0ee418c status=200 rtt_ms=10 ... trust_state=ACCEPTED
+RE-ENROLLED serial=679A794D387EE9B9A8A23B00EE76C27195C50E0B boot_epoch=2 reason=manual previous_boot_epoch=1 at=2026-11-21T01:08:32.298159Z
+SENT seq=5 batch=829c9f15 status=200 rtt_ms=89 ... trust_state=ACCEPTED
+SENT seq=14 batch=0bc5d9b3 status=200 rtt_ms=7 ... trust_state=ACCEPTED
 ```
 
 The CRL after both incidents:
@@ -215,10 +224,10 @@ The CRL after both incidents:
     X509v3 CRL Number:
         5
 Revoked Certificates:
-    Serial Number: 191506149A812043EE93CD1BB4D31D4223E3D9DA   Key Compromise   (dev_stage_001, quarantine)
-    Serial Number: 2F7B5063AFFC16DDE4A2DE0C8B1C9E96B3763A2B   Key Compromise   (dev_stage_001, quarantine)
-    Serial Number: 4CC53DA9AC7A7D250F17F419B5E11C14FBF55944   Superseded       (dev_stage_002, replaced by re-enrollment)
-    Serial Number: 29B14C0A8E74360FCC9B3736CCE3E66B7F74E3F6   Key Compromise   (dev_stage_002, suspected clone)
+    Serial Number: 3C2D56A36999A35526156A8A033A009EC84814D9   Key Compromise   (dev_stage_001, quarantine)
+    Serial Number: 6D392D24038B5A0E9DBBE380D013DC387973DA51   Key Compromise   (dev_stage_001, quarantine)
+    Serial Number: 42319CB80355DCF50113EF3A3510B9D4C2AF41D4   Superseded       (dev_stage_002, replaced by re-enrollment)
+    Serial Number: 197444201A1E71A51FB3F27E2855D4C7D7B946BD   Key Compromise   (dev_stage_002, suspected clone)
 ```
 
 ## 9. Honest close: live vs designed
@@ -234,7 +243,7 @@ system's own anomaly response are both there.
 ```
  device_id        | trust_state | boot_epoch | last_sequence_num
  dev_precheck_001 | ACTIVE      |          1 |                 5
- dev_stage_001    | QUARANTINED |          1 |               104
+ dev_stage_001    | QUARANTINED |          1 |                65
  dev_stage_002    | ACTIVE      |          2 |                14
 
  sequence_id |     event_type     | actor_id |      device
@@ -251,7 +260,7 @@ system's own anomaly response are both there.
 
  device_id        | trust_state | count
  dev_precheck_001 | ACCEPTED    |     5
- dev_stage_001    | QUARANTINED |   104
+ dev_stage_001    | QUARANTINED |    65
  dev_stage_002    | ACCEPTED    |    13
 ```
 
@@ -268,5 +277,5 @@ shared rate limits, a hardware secure element for the device key, and S3 Object 
 **Residual risks.**
 - A clone that re-enrolls while the real device is off goes unnoticed until the real device returns.
 - A software device key can be copied by anyone who can read the device's storage.
-- A clone copied right before a scheduled renewal can win the renewal race and run alone. Found in the Phase 10a
-  rehearsal; see `docs/DEMO_RUNBOOK.md`.
+- A clone copied right before a scheduled renewal can win the renewal race and run alone (DECISIONS 102). Found in
+  the Phase 10a rehearsal.

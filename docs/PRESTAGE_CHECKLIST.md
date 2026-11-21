@@ -34,3 +34,6 @@ Run through this before the demo slot. Later phases append to it.
       `scripts/stage/00-prestage.sh` and continue only when every line is PASS. The ordered T-60/T-15/T-2 lists are in
       `docs/DEMO_RUNBOOK.md`; if the stack dies on stage, run `scripts/stage/99-panic.sh` and open
       `docs/demo-fallback.md`.
+- [ ] Phase 10a.1 (DECISIONS 99): demo leaves are now PT3M. A leaf expires about 120 s after issuance, so with the demo
+      profile any sleep longer than about 1 minute expires a streaming device's certificate. Protocol C recovers it on
+      the next batch, but on stage keep the lid open, power in, and everything under `caffeinate -dimsu`.

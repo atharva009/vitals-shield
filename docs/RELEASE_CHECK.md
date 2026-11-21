@@ -35,6 +35,25 @@ setup code, no `.env`, and no key, state or keystore file was ever committed.
   publishing would need `git filter-repo` (or BFG) on `docs/learning/phase-03-enrollment.md`, followed by re-creating
   the tags, and is the owner's decision.
 
+## Bootstrap tokens in history
+
+- **File:** `docs/learning/phase-03-enrollment.md`, in the "Verify it yourself" outputs of `./gradlew
+  :server:seedDemoDevice` (two `BOOTSTRAP_TOKEN=` lines, shown here as `<redacted-bootstrap-token>` and `<redacted-bootstrap-token>`).
+- **First commit:** `0886322` (docs(learning): phase 3 notes, 2026-11-13). They are in every later commit, in the tags
+  `spine-green-v1` and `dashboard-green-v1`, and in `demo-ready-v1` as first tagged.
+- **Why they are harmless:**
+  - each is single-use, and each was consumed by the enrollment printed on the very next line of the same output;
+  - a bootstrap token expires 15 minutes after it is issued;
+  - the server stores only a hash, and every database that held those hashes has since been dropped by
+    `scripts/reset-demo-state.sh` (DECISIONS 75);
+  - they were dev-seed tokens for the local Compose stack, never for any shared environment.
+- **Current tree:** both are redacted (`BOOTSTRAP_TOKEN=<redacted in Phase 10a>`) since commit `d7272fd`; `git grep -E
+  'BOOTSTRAP_TOKEN=[A-Za-z0-9_-]{43}'` on the current tree finds nothing. History has not been rewritten.
+- **If rewriting:** `git filter-repo --replace-text` (or BFG) on that file, then re-create the three tags and
+  force-push. Every clone of the old history keeps the strings.
+
+Decision: <keep | rewrite>, by Atharva, <date>
+
 ## Commands (outputs redacted)
 
 ```sh

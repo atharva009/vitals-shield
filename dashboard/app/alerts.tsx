@@ -11,6 +11,21 @@ const TYPE_LABEL: Record<string, string> = {
   SECURITY_ANOMALY_ALERT: "SECURITY",
 };
 
+/** A code that may wrap only after an underscore ("SEQUENCE_<wbr>REGRESSION"), never inside a word (Phase 10a.1). */
+function breakable(code: string): React.ReactNode {
+  const parts = code.split("_");
+  return parts.map((p, i) => (
+    <span key={i}>
+      {p}
+      {i < parts.length - 1 ? (
+        <>
+          _<wbr />
+        </>
+      ) : null}
+    </span>
+  ));
+}
+
 /** SECURITY_ANOMALY_ALERT rows first (DECISIONS #92), each group newest first as the server sent it. */
 function pinned(alerts: Alert[]): Alert[] {
   const security = alerts.filter((a) => a.alert_type === "SECURITY_ANOMALY_ALERT");
@@ -102,7 +117,19 @@ export function AlertsPanel({
         </label>
       </div>
       {error && <p className={s.error}>{error}</p>}
-      <table className={s.table}>
+      <table className={`${s.table} ${s.alertsTable}`} data-testid="alerts-table">
+        {/* Fixed layout (Phase 10a.1): the table can never be wider than its panel at 1440 px. */}
+        <colgroup>
+          <col style={{ width: 92 }} />
+          <col style={{ width: 150 }} />
+          <col style={{ width: 104 }} />
+          <col style={{ width: 168 }} />
+          <col />
+          <col style={{ width: 72 }} />
+          <col style={{ width: 76 }} />
+          <col style={{ width: 150 }} />
+          <col style={{ width: 128 }} />
+        </colgroup>
         <thead>
           <tr>
             <th>Created</th>
@@ -134,18 +161,18 @@ export function AlertsPanel({
                   )}{" "}
                   {new Date(a.created_at).toLocaleTimeString()}
                 </td>
-                <td>{a.device_id}</td>
+                <td className={s.codeBreak}>{breakable(a.device_id)}</td>
                 <td>
                   <span className={`${s.chip} ${s.chipMuted}`}>{TYPE_LABEL[a.alert_type] ?? a.alert_type}</span>
                 </td>
-                <td className={`${s.mono} ${s.code}`}>{a.condition_code ?? "–"}</td>
+                <td className={`${s.mono} ${s.codeBreak}`}>{a.condition_code ? breakable(a.condition_code) : "–"}</td>
                 <td>{a.explanation}</td>
                 <td className={s.num} title={a.triggering_batch_ids_short.join("\n")}>
                   {a.triggering_batch_count}
                 </td>
                 <td>{a.baseline_version !== null ? `v${a.baseline_version}` : "–"}</td>
                 <td>
-                  <span className={`${s.chip} ${statusClass(a.alert_status)}`}>{a.alert_status}</span>
+                  <span className={`${s.chip} ${statusClass(a.alert_status)}`}>{breakable(a.alert_status)}</span>
                   {retracted && a.retracted_at && (
                     <div className={s.approved}>retracted {new Date(a.retracted_at).toLocaleTimeString()}</div>
                   )}

@@ -1,0 +1,23 @@
+# The stage values of the demo profile (DECISIONS 99), imported by application-demo.yml after application-local.yml,
+# so each value here wins over local's (the later import has the higher precedence).
+vitalsshield:
+  pki:
+    # Phase 10a.1: PT3M (was PT4M). notBefore is backdated 60 s, so a leaf lives about 120 s after issuance and its
+    # renewal is due at 2/3 of the validity, about 60 s after issuance (DECISIONS 83, 99): the first rollover lands
+    # within a minute of the enroll, inside the streaming beat of the demo.
+    leaf-ttl: PT3M
+    renewal-grace: PT60S
+  clinical:
+    calibration-size: 10
+  reenroll:
+    # Everything on stage comes from 127.0.0.1, so the per-address limit is effectively a global one; 60/min leaves
+    # room for repeated drills and both clone copies re-enrolling at once (DECISIONS 90, 99).
+    per-address-limit: 60
+    global-limit: 300
+  anomaly:                  # all traps ON (DECISIONS 93, 94)
+    sequence-regression:
+      enabled: true
+    post-drain:
+      enabled: true
+  backstop:
+    enabled: true
