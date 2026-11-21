@@ -4,6 +4,7 @@ import com.vitalsshield.crypto.TelemetryJws;
 import com.vitalsshield.server.anomaly.SequenceRegressionTrap;
 import com.vitalsshield.server.clinical.ClinicalEvaluator;
 import com.vitalsshield.server.gateway.ResolvedCert;
+import com.vitalsshield.server.gateway.StoreUnavailable;
 import com.vitalsshield.server.pki.trust.CertKey;
 import com.vitalsshield.server.renewal.CertificateActivationService;
 import java.security.MessageDigest;
@@ -93,8 +94,11 @@ public class TelemetryIngestService {
         this.evaluator = evaluator;
     }
 
-    /** Result: HTTP status and body. */
-    public record Outcome(int status, Map<String, Object> body) {
+    /** Result: HTTP status, body and optional Retry-After seconds. */
+    public record Outcome(int status, Map<String, Object> body, Integer retryAfterSeconds) {
+        public Outcome(int status, Map<String, Object> body) {
+            this(status, body, null);
+        }
     }
 
     public Mono<Outcome> ingest(String jwsCompact, X509Certificate tlsLeaf, ResolvedCert cert) {
@@ -103,6 +107,12 @@ public class TelemetryIngestService {
                 .onErrorResume(IngestRejection.class, r -> {
                     metrics.increment("rejected." + r.status() + "." + r.body().get("error"));
                     return Mono.just(new Outcome(r.status(), r.body()));
+                })
+                // DECISIONS #103: the database is unreachable or timed out. The CTE is one autocommit statement, so
+                // either it committed (the retry is answered idempotent_retry) or nothing was stored; never a 200.
+                .onErrorResume(StoreUnavailable::matches, e -> {
+                    metrics.increment("rejected.503." + StoreUnavailable.ERROR);
+                    return Mono.just(new Outcome(503, StoreUnavailable.BODY, StoreUnavailable.retryAfterSeconds()));
                 });
     }
 

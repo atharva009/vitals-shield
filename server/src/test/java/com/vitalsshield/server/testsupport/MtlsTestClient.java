@@ -38,7 +38,15 @@ public final class MtlsTestClient {
     private MtlsTestClient() {
     }
 
-    public record Response(int status, String body) {
+    /** Status, body, and the response headers with lower-case names. */
+    public record Response(int status, String body, java.util.Map<String, String> headers) {
+        public Response(int status, String body) {
+            this(status, body, java.util.Map.of());
+        }
+
+        public String header(String name) {
+            return headers.get(name.toLowerCase(Locale.ROOT));
+        }
     }
 
     /** What happened when we tried to connect and send one request. */
@@ -148,9 +156,14 @@ public final class MtlsTestClient {
             int status = Integer.parseInt(statusLine.split(" ")[1]);
             int contentLength = -1;
             boolean chunked = false;
+            java.util.Map<String, String> headers = new java.util.LinkedHashMap<>();
             String line;
             while ((line = readLine()) != null && !line.isEmpty()) {
                 String lower = line.toLowerCase(Locale.ROOT);
+                int colon = line.indexOf(':');
+                if (colon > 0) {
+                    headers.put(lower.substring(0, colon).trim(), line.substring(colon + 1).trim());
+                }
                 if (lower.startsWith("content-length:")) {
                     contentLength = Integer.parseInt(line.substring(15).trim());
                 } else if (lower.startsWith("transfer-encoding:") && lower.contains("chunked")) {
@@ -173,7 +186,7 @@ public final class MtlsTestClient {
             } else {
                 body = contentLength <= 0 ? new byte[0] : in.readNBytes(contentLength);
             }
-            return new Response(status, new String(body, StandardCharsets.UTF_8));
+            return new Response(status, new String(body, StandardCharsets.UTF_8), headers);
         }
 
         /** True if the server closes the connection within {@code timeout} (EOF, reset, or TLS close). */

@@ -219,6 +219,50 @@ class MtlsListenerIT {
         assertThat(again.kind()).as(again.detail()).isEqualTo(Kind.TLS_REJECTED);
     }
 
+    /**
+     * DECISIONS #37: a revoked leaf is refused at the handshake with TLS alert 46 (certificate_unknown), the same alert
+     * as any other refusal, as seen by an independent client (openssl s_client). Before the revocation the same
+     * command gets HTTP 200, so the alert is caused by the revocation and not by the command.
+     */
+    @Test
+    @Order(20)
+    void revokedLeafGetsAlert46FromOpensslSClient() throws Exception {
+        String openssl = com.vitalsshield.server.testsupport.Openssl.find();
+        org.junit.jupiter.api.Assumptions.assumeTrue(openssl != null,
+                "OpenSSL 3 not found: set OPENSSL_BIN or `brew install openssl@3`");
+        Leaf leaf = TestDevices.enroll(server.ctx(), "dev_alert46");
+        Path dir = Files.createTempDirectory("vs-alert46");
+        Files.writeString(dir.resolve("leaf.pem"), com.vitalsshield.server.pki.Pems.certificate(leaf.cert()));
+        StringBuilder chain = new StringBuilder();
+        for (X509Certificate c : leaf.chain().subList(1, leaf.chain().size())) {
+            chain.append(com.vitalsshield.server.pki.Pems.certificate(c));
+        }
+        Files.writeString(dir.resolve("chain.pem"), chain.toString());
+        Files.writeString(dir.resolve("key.pem"), "-----BEGIN PRIVATE KEY-----\n"
+                + java.util.Base64.getMimeEncoder(64, "\n".getBytes(StandardCharsets.US_ASCII))
+                        .encodeToString(leaf.keyPair().getPrivate().getEncoded())
+                + "\n-----END PRIVATE KEY-----\n");
+        Files.writeString(dir.resolve("root.pem"), com.vitalsshield.server.pki.Pems.certificate(server.root()));
+        String request = "GET /api/v1/telemetry/ping HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+        String[] args = {"s_client", "-connect", "127.0.0.1:" + server.ports().mtls(), "-tls1_3",
+                "-cert", "leaf.pem", "-cert_chain", "chain.pem", "-key", "key.pem", "-CAfile", "root.pem",
+                "-verify_return_error", "-ign_eof"};
+
+        com.vitalsshield.server.testsupport.Openssl.Result before =
+                com.vitalsshield.server.testsupport.Openssl.run(openssl, dir, request, args);
+        assertThat(before.output()).as(before.output()).contains("HTTP/1.1 200");
+
+        revoke(server, leaf);
+        com.vitalsshield.server.testsupport.Openssl.Result after =
+                com.vitalsshield.server.testsupport.Openssl.run(openssl, dir, request, args);
+        System.out.println("openssl s_client after revocation (exit " + after.exit() + "):\n" + after.output());
+        assertThat(after.output()).as(after.output())
+                .contains("alert certificate unknown")
+                .contains("SSL alert number 46")
+                .doesNotContain("HTTP/1.1");
+        assertThat(after.exit()).isNotZero();
+    }
+
     @Test
     @Order(21)
     void revokeClosesLiveKeepAliveSocket() throws IOException {

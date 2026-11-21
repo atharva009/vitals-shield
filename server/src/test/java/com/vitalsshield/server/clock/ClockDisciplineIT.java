@@ -70,6 +70,12 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 class ClockDisciplineIT {
 
     static final Duration SKEW = Duration.ofMinutes(10);
+    /**
+     * Phase 10b.1: the Docker VM clock is a few milliseconds ahead of or behind the host, so a difference of SKEW is
+     * compared with a tolerance. It used to be truncated to whole minutes and expected to be 9, which failed whenever
+     * Postgres ran ahead of the host.
+     */
+    static final Duration SKEW_TOLERANCE = Duration.ofSeconds(30);
 
     @Container
     @ServiceConnection
@@ -126,7 +132,7 @@ class ClockDisciplineIT {
     @Test
     @Order(0)
     void theJvmClockReallyIsTenMinutesBehindPostgres() {
-        assertThat(Duration.between(clock.instant(), dbNow()).toMinutes()).isEqualTo(9L);
+        assertThat(Duration.between(clock.instant(), dbNow())).isBetween(SKEW.minus(SKEW_TOLERANCE), SKEW.plus(SKEW_TOLERANCE));
     }
 
     /** Row: EnrollmentService token claim, expires_at (JVM-written) vs JVM clock. */
@@ -148,7 +154,7 @@ class ClockDisciplineIT {
         fx().enroll("dev_clk_q");
         QuarantineService.Result r = quarantine.quarantine("dev_clk_q", 5, "clock discipline").block(Duration.ofSeconds(20));
         assertThat(r.at()).isEqualTo(NOW_IN_QUARANTINE_TX.get());
-        assertThat(Duration.between(clock.instant(), r.at()).toMinutes()).as("not the JVM clock").isEqualTo(9L);
+        assertThat(Duration.between(clock.instant(), r.at())).as("not the JVM clock").isBetween(SKEW.minus(SKEW_TOLERANCE), SKEW.plus(SKEW_TOLERANCE));
     }
 
     /** Row: RenewalSweepers nonce sweep, expires_at (JVM-written) vs JVM clock. */
@@ -226,7 +232,7 @@ class ClockDisciplineIT {
         assertThat(ledger.sweepStale()).contains(CertKey.of(issuer, "bb01"));
         Instant voidedAt = jdbc.queryForObject("SELECT voided_at FROM issued_serials WHERE serial_number = 'bb01'",
                 Timestamp.class).toInstant();
-        assertThat(Duration.between(voidedAt, dbNow()).toMinutes()).as("JVM time, 10 min behind").isEqualTo(9L);
+        assertThat(Duration.between(voidedAt, dbNow())).as("JVM time, 10 min behind").isBetween(SKEW.minus(SKEW_TOLERANCE), SKEW.plus(SKEW_TOLERANCE));
     }
 
     /** Rows: renewal issued_at and activation activated_at, both Postgres-stamped. */
@@ -266,7 +272,7 @@ class ClockDisciplineIT {
         Map<String, Object> o = overview.snapshot();
         Instant server = Instant.parse((String) o.get("server_time"));
         Instant db = Instant.parse((String) o.get("db_time"));
-        assertThat(Duration.between(server, db).toMinutes()).isEqualTo(9L);
+        assertThat(Duration.between(server, db)).isBetween(SKEW.minus(SKEW_TOLERANCE), SKEW.plus(SKEW_TOLERANCE));
         Map<String, Object> skew = (Map<String, Object>) o.get("clock");
         assertThat(skew.get("state")).isEqualTo("RED");
         assertThat((Long) skew.get("skew_ms")).isBetween(599_000L, 601_000L);

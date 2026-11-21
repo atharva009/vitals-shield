@@ -75,10 +75,15 @@ ECDSA_SHA_256, DER output), but none of the custody: the keys are data in a cont
 production the endpoint override goes away and the code stays the same; what changes is real HSM custody, IAM roles,
 and the split the spec describes (gateway with zero KMS permissions, separate signer service, separate DB roles,
 offline Root ceremony), none of which is built today. Also, only the local profile may rebuild a lost hierarchy; any
-other profile refuses to start before it creates a key.
+other profile refuses to start before it creates a key. A LocalStack restart wipes every key: the drill restarts it,
+and the next boot rebuilds (`REBUILT`, 4 old keys retired), refuses the old device certificate at the handshake, and
+the device re-provisions at boot epoch 2 with the same DEK. The whole drill took 17.8 s, about 14 s of it waiting for
+LocalStack.
 
 Evidence: `com.vitalsshield.server.pki.ReconciliationIT.prodProfileFailsClosed`,
-`com.vitalsshield.server.kms.KmsSmokeIT.signatureIsDer`. Spec Section 8 table.
+`com.vitalsshield.server.kms.KmsSmokeIT.signatureIsDer`,
+`com.vitalsshield.server.drill.LocalStackRestartDrill.localStackRestartRebuildsAndDeviceRecovers` (drill tier,
+timings in `docs/TRACEABILITY.md`). Spec Section 8 table.
 
 ### ★ 6. What does the revocation latency number measure?
 
@@ -184,10 +189,24 @@ Evidence: `com.vitalsshield.server.admin.KmsHealthMonitorTest.networkErrorIsUnkn
 ### What happens if KMS is down during enrollment or renewal?
 
 The device gets 503 with Retry-After and nothing is lost. For enrollment the token goes back to ISSUED (D34); for
-renewal the reserved serial is VOIDED and the device keeps streaming on its current leaf. With a 12 h leaf renewed at
-8 h that is 4 hours of outage tolerance.
+renewal and re-enrollment the reserved serial is VOIDED and the device keeps streaming on its current leaf. With a
+12 h leaf renewed at 8 h that is 4 hours of outage tolerance. The Retry-After is a random 3 to 8 s.
 
-Evidence: `com.vitalsshield.server.enrollment.EnrollmentIT.kmsFailureReturnsToken`.
+Evidence: `com.vitalsshield.server.enrollment.EnrollmentIT.kmsFailureReturnsToken`,
+`com.vitalsshield.server.reenroll.RenewReEnrollRefusalsIT.renewalKmsFailureIs503WithRetryAfterAndTheSerialIsVoided`,
+`com.vitalsshield.server.reenroll.RenewReEnrollRefusalsIT.reEnrollKmsFailureIs503WithRetryAfterAndTheSerialIsVoided`.
+
+### What happens if the database goes down while devices are streaming?
+
+Ingest answers 503 `{"error":"STORE_UNAVAILABLE"}` with a random 3 to 8 s Retry-After, never 200 and never 500 (D103).
+A request that cannot get a connection fails after 5 s (HikariCP), inside the device's 15 s timeout. The per-request
+certificate check needs the database too, so it refuses the request the same way: it fails closed. The device resends
+the same frame, same batch_id and sequence number, until it is answered. The CTE is one autocommit statement, so either
+it committed (the resend is answered `idempotent_retry`) or nothing was stored. In the test, Postgres is stopped in the
+middle of a 40-frame stream and started again: every sequence number 1 to 40 is stored once.
+
+Evidence: `com.vitalsshield.server.telemetry.DbDownIngestIT.databaseOutageMidStreamIs503ThenTheSameFrameIsAcceptedAndNothingIsLostOrDuplicated`,
+`com.vitalsshield.server.gateway.StoreUnavailableTest`.
 
 ### Are the gateway and the signer separate services?
 
@@ -207,9 +226,10 @@ server checking a client, TLS 1.2 and 1.3) always sends `CERTIFICATE_UNKNOWN`, a
 only runs when a client checks a server. So a revoked device cannot tell "revoked" from "unknown", which also tells
 an attacker less.
 
-Evidence: `com.vitalsshield.server.pki.trust.DynamicMtlsTrustManagerTest.denyListedLeafFails` (cause is REVOKED).
-Live: `sleep 1 | openssl s_client -connect 127.0.0.1:8443 -cert revoked.pem -key revoked.key -CAfile var/trust/root-ca.pem 2>&1 | grep -i alert`
-prints `SSL alert number 46`.
+Evidence: `com.vitalsshield.server.gateway.MtlsListenerIT.revokedLeafGetsAlert46FromOpensslSClient` runs `openssl
+s_client` with a device certificate before and after revoking it: HTTP 200 first, then `ssl/tls alert certificate
+unknown ... SSL alert number 46` and exit 1. `com.vitalsshield.server.pki.trust.DynamicMtlsTrustManagerTest.denyListedLeafFails`
+checks the cause is REVOKED.
 
 ### TLS resumption skips certificate checks. How does a revoked device not resume?
 

@@ -89,9 +89,16 @@ public class CertStatusResolver implements WebFilter, Ordered {
         }
 
         CertKey k = key;
-        return Mono.fromCallable(() -> load(k))
+        return Mono.fromCallable(() -> java.util.Optional.of(load(k)))
                 .subscribeOn(Schedulers.boundedElastic())
-                .flatMap(rows -> {
+                // DECISIONS #103: the status cannot be read, so the request is refused (fail closed) with a 503 the
+                // device retries, not a 500.
+                .onErrorResume(StoreUnavailable::matches, e -> Mono.just(java.util.Optional.empty()))
+                .flatMap(loaded -> {
+                    if (loaded.isEmpty()) {
+                        return StoreUnavailable.write(exchange);
+                    }
+                    List<Row> rows = loaded.get();
                     String verdict = verdict(rows, now);
                     if (verdict != null) {
                         if ("SUPERSEDED".equals(verdict)) {

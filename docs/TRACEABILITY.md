@@ -8,22 +8,46 @@ each "Live (tested)" item in Section 8 is mapped to the evidence for it. Evidenc
 
 ## Test run behind this matrix
 
-`./gradlew test integrationTest e2eTest --rerun-tasks`, 2026-11-20 (Phase 10b), `BUILD SUCCESSFUL in 10m 32s`:
+`./gradlew test integrationTest e2eTest --rerun-tasks`, 2026-11-20 (Phase 10b.1), `BUILD SUCCESSFUL in 11m 8s`:
 
 | Tier | Tests | Failures | Errors | Skipped |
 |---|---|---|---|---|
-| `test` (server) | 249 | 0 | 0 | 0 |
+| `test` (server) | 252 | 0 | 0 | 0 |
 | `test` (simulator) | 21 | 0 | 0 | 0 |
 | `test` (crypto-common) | 56 | 0 | 0 | 0 |
-| `integrationTest` | 220 | 0 | 0 | 0 |
+| `integrationTest` | 226 | 0 | 0 | 0 |
 | `e2eTest` | 6 | 0 | 0 | 0 |
-| **Total** | **552** | **0** | **0** | **0** |
+| **Total** | **561** | **0** | **0** | **0** |
 
-The drill tier (`./gradlew drillTest`, one class) was not run in this phase, because it restarts LocalStack and wipes
-the KMS keys. Its one claim is listed as a manual record below.
+## Drill run
+
+`./gradlew :server:drillTest`, 2026-11-20 (Phase 10b.1), `BUILD SUCCESSFUL in 19s`: 1 test, 0 failures, test time
+17.8 s. It restarts the Compose LocalStack, which wipes the KMS keys, so it is not part of the regular gate. Step
+timings as printed by `LocalStackRestartDrill`:
+
+```
+DRILL t+ 1625 ms  server started (first boot)
+DRILL t+ 1879 ms  1. enrolled and streamed 3 batches
+DRILL t+15834 ms  2. docker compose restart localstack, healthy again
+DRILL t+16294 ms  3. server restarted
+DRILL t+16310 ms  3. REBUILT confirmed; trust file changed; old certificate refused at the handshake
+DRILL t+16368 ms  4. reset-state, new token, re-enrolled at boot_epoch=2 with the same DEK, 1 batch accepted
+```
+
+The LocalStack restart takes about 14 s of the 16.4 s. The second boot logs `Hierarchy reconciliation: REBUILT`,
+retires the 4 old keys, and the device's old certificate is refused at the handshake. Recovery in this drill is
+re-provisioning through Protocol A (a new token, boot epoch 2, the DEK kept), because the rebuild clears every DEK
+anchor.
+
+Phase 10b.1 added 9 tests: `StoreUnavailableTest` (3, unit), `DbDownIngestIT` (1),
+`RenewReEnrollRefusalsIT` (3), `ChallengeRateLimitIT` (1) and `MtlsListenerIT.revokedLeafGetsAlert46FromOpensslSClient`
+(1). The first run of the suite in 10b.1 failed one existing test, `ClockDisciplineIT.staleReservationVoidedAtIsJvmTime`:
+four assertions in that class truncated a 10-minute skew to whole minutes and expected 9, which fails whenever the
+Docker VM clock runs a few milliseconds ahead of the host. They now compare with 10 minutes plus or minus 30 s; the
+run above is the second run.
 
 Every test reference in this file and in [`QA_DRILL.md`](QA_DRILL.md) was checked mechanically against the JUnit XML
-of that run. A reference counts only if it names a passed test case, a method of a class whose recorded invocations
+of the test run above and of the drill run. A reference counts only if it names a passed test case, a method of a class whose recorded invocations
 all passed (parameterized and repeated tests are recorded per invocation), or a whole class that passed.
 
 ## Section 2: claims by layer
@@ -40,8 +64,8 @@ all passed (parameterized and repeated tests are recorded per invocation), or a 
 | L1.6 A deny-listed certificate is rejected at the handshake with no database access. [D24] | 2.1 | test | `com.vitalsshield.server.pki.trust.DynamicMtlsTrustManagerTest.denyListedLeafFails`, `com.vitalsshield.server.pki.trust.DynamicMtlsTrustManagerTest.anchorsAreReadOnEveryCall`, `com.vitalsshield.server.gateway.MtlsListenerIT.revokedLeafRejectedOnImmediateReconnect` |
 | L1.7 The post-handshake gate re-checks the deny-list after every completed handshake. [D24] | 2.1 | test | `com.vitalsshield.server.gateway.ResumptionIT.resumedSessionNeverReaches200AfterRevoke` |
 | L1.8 A status change is refused on the next request on the same connection (no cache). [D23] | 2.1 | test | `com.vitalsshield.server.gateway.MtlsListenerIT.dbStatusChangeVisibleToNextRequestOnSameConnection`, `com.vitalsshield.server.e2e.TelemetryPerRequest403E2E.ingestOnSameConnectionAfterRevokeIs403` |
-| L1.9 Revoking a certificate closes its live sockets; revoke-to-close latency under 500 ms. [D11] | 2.1 | test | `com.vitalsshield.server.gateway.MtlsListenerIT.revokeClosesLiveKeepAliveSocket`, `com.vitalsshield.server.e2e.SpineE2E.spineFiveTimes` (asserts the latency; this run: `[1764, 1737, 1365, 1484, 1204]` µs) |
-| L1.10 A rejected client certificate receives TLS alert 46 (`certificate_unknown`). [D37] | 2.1 | manual record | `docs/learning/phase-02-listeners-mtls.md` (Phase 2.1 resumption and alert observations, `openssl s_client` output) and `docs/learning/phase-03-enrollment.md` (verify-it-yourself). The trust manager's REVOKED cause is tested by `com.vitalsshield.server.pki.trust.DynamicMtlsTrustManagerTest.denyListedLeafFails`; no test asserts the alert number. |
+| L1.9 Revoking a certificate closes its live sockets; revoke-to-close latency under 500 ms. [D11] | 2.1 | test | `com.vitalsshield.server.gateway.MtlsListenerIT.revokeClosesLiveKeepAliveSocket`, `com.vitalsshield.server.e2e.SpineE2E.spineFiveTimes` (asserts the latency; this run: `[1875, 1288, 2670, 1365, 1353]` µs) |
+| L1.10 A rejected client certificate receives TLS alert 46 (`certificate_unknown`). [D37] | 2.1 | test | `com.vitalsshield.server.gateway.MtlsListenerIT.revokedLeafGetsAlert46FromOpensslSClient` (Phase 10b.1: `openssl s_client` gets HTTP 200 before the revocation, then `ssl/tls alert certificate unknown ... SSL alert number 46` and exit 1), `com.vitalsshield.server.pki.trust.DynamicMtlsTrustManagerTest.denyListedLeafFails` |
 
 ### Layer 2: origin authentication and at-rest integrity
 
@@ -69,7 +93,7 @@ all passed (parameterized and repeated tests are recorded per invocation), or a 
 | Claim (spec v2) | § | Evidence type | Evidence |
 |---|---|---|---|
 | L4.1 A device renews at 2/3 of validity without human action, proving the current OLK and the new key. [D83] | 2.1 | test | `com.vitalsshield.server.renewal.RenewalIT.happyPathPendingActivationGraceAndEviction`, `com.vitalsshield.server.renewal.RenewalIT.proofRejections`, `com.vitalsshield.simulator.RenewalDueRuleTest.twelveHourLeafRenewsAtEightHours`, `com.vitalsshield.server.e2e.RenewalE2E.streamsThroughRolloversThenQuarantineEndsIt` |
-| L4.2 Renewal refused when not ACTIVE, unassigned or past the horizon; re-enrollment refused when not ACTIVE or past the horizon. | 2.1 | test | `com.vitalsshield.server.renewal.RenewalIT.deviceAndAssignmentRejections`, `com.vitalsshield.server.reenroll.ReEnrollIT.reauthRequiredDeviceIs403AndItsNonceCannotBeReplayed`, `com.vitalsshield.server.reenroll.ReEnrollIT.horizonExceededIs409` |
+| L4.2 Renewal refused when not ACTIVE, unassigned or past the horizon; re-enrollment refused when not ACTIVE, unassigned (409 DEVICE_UNASSIGNED) or past the horizon. | 2.1 | test | `com.vitalsshield.server.renewal.RenewalIT.deviceAndAssignmentRejections`, `com.vitalsshield.server.reenroll.ReEnrollIT.reauthRequiredDeviceIs403AndItsNonceCannotBeReplayed`, `com.vitalsshield.server.reenroll.RenewReEnrollRefusalsIT.reEnrollWithNoActiveAssignmentIs409DeviceUnassigned`, `com.vitalsshield.server.reenroll.ReEnrollIT.horizonExceededIs409` |
 | L4.3 A device whose leaf expired offline recovers through Protocol C, keeping epoch and sequence. [D95, D97] | 2.1 | test | `com.vitalsshield.server.reenroll.ReEnrollIT.offlineExpiryHappyPathKeepsEpochAndSequence`, `com.vitalsshield.server.reenroll.ReEnrollIT.midStreamOutsideValidityRecoversAndResendsTheSameFrame`, `com.vitalsshield.server.e2e.OfflineExpiryRecoveryE2E.streamSleepPastNotAfterResumeReEnrollsAutomatically` |
 | L4.4 An expired leaf without the DEK cannot re-enroll. | 2.1 | test | `com.vitalsshield.server.reenroll.ReEnrollIT.wrongDekSignatureIs400`, `com.vitalsshield.server.reenroll.ReEnrollIT.csrKeyOfAnOldCertificateIs400` |
 
@@ -107,12 +131,14 @@ all passed (parameterized and repeated tests are recorded per invocation), or a 
 | KMS health monitor; canonical encodings against golden vectors | 8 | test | `com.vitalsshield.server.admin.KmsHealthMonitorTest` (whole class), `com.vitalsshield.server.admin.AdminOverviewIT.kmsKeyLossIsReported`, `com.vitalsshield.crypto.encoding.CanonicalEncodingsTest` (whole class) |
 | Serials: random, positive, at most 20 octets, unique | 8 | test | `com.vitalsshield.server.pki.SerialAllocatorTest` (whole class), `com.vitalsshield.server.pki.CertificateProfileTest.serialsArePositiveAtMost20OctetsAndUnique` |
 | Every signed serial RECORDED or VOIDED (ledger) | 8 | test | `com.vitalsshield.server.pki.SerialReservationIT.everyCertificateHasLedgerRow`, `com.vitalsshield.server.pki.SerialReservationIT.crashAfterSignIsVoidedByBootSweep`, `com.vitalsshield.server.pki.SerialReservationIT.reclaimRaceLoserIsVoidedAndOnCrl` |
-| Rebuild after a real LocalStack restart (moved to "Live (manual verification)" in Phase 10b) | 8 | manual record | `LocalStackRestartDrill` (drill tier), last run in Phase 4: `docs/learning/phase-04-spine.md`, tests-to-properties table |
+| Rebuild after a real LocalStack restart ("Live (manual verification)": drill tier, outside the regular gate) | 8 | test (drill tier) | `com.vitalsshield.server.drill.LocalStackRestartDrill.localStackRestartRebuildsAndDeviceRecovers`, run in Phase 10b.1; step timings in "Drill run" above |
 | Three loopback listeners, per-port path enforcement | 8 | test | `com.vitalsshield.server.gateway.MtlsListenerIT.allListenersOnLoopback`, `com.vitalsshield.server.gateway.MtlsListenerIT.wrongPortReturns404`, `com.vitalsshield.server.gateway.PortEnforcementWebFilterTest` (whole class), `com.vitalsshield.server.admin.webauthn.CsrfAndCookieIT.adminPortAnswersOnIpv6Loopback` |
 | Live socket eviction under 500 ms; deny-list survives restart; 30 s deny-list refresh | 8 | test | `com.vitalsshield.server.e2e.SpineE2E.spineFiveTimes`, `com.vitalsshield.server.gateway.MtlsListenerIT.denyListSurvivesRestart`, `com.vitalsshield.server.pki.trust.CertificateDenyListTest.refreshAddsNewRows`, `com.vitalsshield.server.pki.trust.CertificateDenyListTest.refreshNeverRemovesEntries` |
+| TLS alert 46 for a revoked client certificate, asserted on `openssl s_client` output [D37] | 8 | test | `com.vitalsshield.server.gateway.MtlsListenerIT.revokedLeafGetsAlert46FromOpensslSClient` |
 | Backstop poller on `revoked_db_at` | 8 | test | `com.vitalsshield.server.signer.BackstopPollerIT.directSqlRevocationClosesTheLiveSocketWithinFourSeconds` |
 | CRLs cached, never signed by a GET, republished after revocation and coalesced | 8 | test | `com.vitalsshield.server.gateway.MtlsListenerIT.crlGetsDoNotSign`, `com.vitalsshield.server.gateway.MtlsListenerIT.crlRepublishedOnRevoke`, `com.vitalsshield.server.gateway.MtlsListenerIT.crlBurstCoalesced`, `com.vitalsshield.server.pki.PkiOpensslIT.revokedLeafAppearsOnIntermediateCrl` |
 | Provisioning begin/finish; token claim, reclaim, burn, return; enrollment 503 with Retry-After | 8 | test | `com.vitalsshield.server.enrollment.EnrollmentIT.tokenSingleUse`, `com.vitalsshield.server.enrollment.EnrollmentIT.staleClaimingReclaimed`, `com.vitalsshield.server.enrollment.EnrollmentIT.badDekProofRevokesToken`, `com.vitalsshield.server.enrollment.EnrollmentIT.kmsFailureReturnsToken` |
+| Renewal and re-enrollment 503 with a 3 to 8 s Retry-After when KMS signing fails, serial VOIDED [D34, D38] | 8 | test | `com.vitalsshield.server.reenroll.RenewReEnrollRefusalsIT.renewalKmsFailureIs503WithRetryAfterAndTheSerialIsVoided`, `com.vitalsshield.server.reenroll.RenewReEnrollRefusalsIT.reEnrollKmsFailureIs503WithRetryAfterAndTheSerialIsVoided` |
 | DEK proof, CSR proof, DEK anchor; boot epoch 1 then +1 on re-provision | 8 | test | `com.vitalsshield.server.enrollment.EnrollmentIT.happyPathEnrolls`, `com.vitalsshield.server.enrollment.EnrollmentIT.badCsrSignatureRevokesToken`, `com.vitalsshield.server.enrollment.EnrollmentIT.reprovisionRevokesPriorEvictsAndBumpsEpoch`, `com.vitalsshield.server.enrollment.BootEpochRuleTest` (whole class) |
 | Simulator enroll and persistence; dev seed tool restrictions | 8 | test | `com.vitalsshield.server.enrollment.SimulatorEnrollIT.enrollPersistAndPing`, `com.vitalsshield.server.enrollment.SimulatorEnrollIT.restartDoesNotReenroll`, `com.vitalsshield.devtools.SeedDemoDeviceTest` (whole class) |
 | Passkey registration with the setup code, discoverable sign-in, sessions with idle and absolute limits | 8 | test | `com.vitalsshield.server.admin.webauthn.WebAuthnFlowsIT.firstRegistrationNeedsTheSetupCode`, `com.vitalsshield.server.admin.webauthn.WebAuthnFlowsIT.signInSetsAStrictHttpOnlyCookie`, `com.vitalsshield.server.admin.webauthn.SessionStoreTest.idleExpiryAt30Minutes`, `com.vitalsshield.server.admin.webauthn.SessionStoreTest.activityKeepsItAliveUntilTheAbsoluteLimit` |
@@ -120,12 +146,13 @@ all passed (parameterized and repeated tests are recorded per invocation), or a 
 | Signature counter rule; ceremony expiry and single use (410) | 8 | test | `com.vitalsshield.server.admin.webauthn.CounterRuleTest` (whole class), `com.vitalsshield.server.admin.webauthn.WebAuthnFlowsIT.counterRegressionIsRejected`, `com.vitalsshield.server.admin.webauthn.CeremonyStoreTest.expiresAfterTwoMinutes`, `com.vitalsshield.server.admin.webauthn.StepUpIT.finishingTwiceIs410` |
 | Real Touch ID (registration, provisioning, step-up quarantine) | 8 | manual record | `docs/learning/phase-06-manual-touchid.md` (D80) |
 | JWS verification with the TLS key only, header allow-list, certificate binding, strict payload | 8 | test | `com.vitalsshield.crypto.JwsPolicyTest` (whole class), `com.vitalsshield.server.telemetry.TelemetryIngestIT.differentKeyWithCorrectX5tIsSigInvalid`, `com.vitalsshield.server.telemetry.TelemetryPayloadValidatorTest` (whole class) |
+| Ingest 503 STORE_UNAVAILABLE with a 3 to 8 s Retry-After while the database is stopped mid-stream; the same frame accepted after restart; no batch lost or duplicated [D103] | 8 | test | `com.vitalsshield.server.telemetry.DbDownIngestIT.databaseOutageMidStreamIs503ThenTheSameFrameIsAcceptedAndNothingIsLostOrDuplicated`, `com.vitalsshield.server.gateway.StoreUnavailableTest` (whole class) |
 | Replay CTE against a model over 2000 random operations; concurrent duplicates; idempotent retries; BATCH_ID_REUSED; ASSIGNMENT_CHANGED | 8 | test | `com.vitalsshield.server.telemetry.ReplayWindowPropertyIT.endpointMatchesModel`, `com.vitalsshield.server.telemetry.ConcurrentDuplicateIT` (whole class), `com.vitalsshield.server.telemetry.TelemetryIngestIT.staleAssignmentIs409WithCurrentId` |
 | Renew challenge bound to the TLS serial; body binding; proof checks; nonce replay refused | 8 | test | `com.vitalsshield.server.renewal.RenewalIT.challengeAndBindingRejections`, `com.vitalsshield.server.renewal.RenewalIT.proofRejections`, `com.vitalsshield.server.renewal.RenewalChallengeTest` (whole class) |
 | First-use activation; concurrent activation; grace, grace eviction, per-request refusal after grace | 8 | test | `com.vitalsshield.server.renewal.RenewalIT.happyPathPendingActivationGraceAndEviction`, `com.vitalsshield.server.renewal.ActivationConcurrencyIT.fiveParallelFirstBatchesSwitchOverOnce`, `com.vitalsshield.server.renewal.RenewalIT.perRequestCheckRefusesRenewedCertOnceTheStoredGraceHasPassed` |
 | Lost response leads to REPLACED_BEFORE_USE; renewal on ASSIGNMENT_CHANGED; quarantine during renewal; crash after sign voided | 8 | test | `com.vitalsshield.server.renewal.RenewalIT.lostResponseRenewTwiceBeforeUse`, `com.vitalsshield.server.renewal.AssignmentChangedRenewalIT.assignmentChangeTriggersRenewal`, `com.vitalsshield.server.renewal.QuarantineDuringRenewalIT.quarantineRevokesRenewedActiveAndPending`, `com.vitalsshield.server.renewal.RenewalIT.crashAfterSignIsVoidedBySweepAndListed` |
 | Expiry sweep, including the boot run; simulator renewal due rule and pending store | 8 | test | `com.vitalsshield.server.renewal.ExpiredSweeperIT` (whole class), `com.vitalsshield.simulator.RenewalDueRuleTest` (whole class), `com.vitalsshield.simulator.SimulatorStateStoreTest.pendingIsSavedPromotedAndDiscarded` |
-| Re-enroll challenge (stateless HMAC, separate key); rate limiter (unit test) | 8 | test | `com.vitalsshield.server.reenroll.ChallengeTagTest` (whole class), `com.vitalsshield.server.reenroll.RateLimiterTest` (whole class) |
+| Re-enroll challenge (stateless HMAC, separate key); rate limiter, unit and endpoint (11th challenge in a minute is 429 with Retry-After) | 8 | test | `com.vitalsshield.server.reenroll.ChallengeTagTest` (whole class), `com.vitalsshield.server.reenroll.RateLimiterTest` (whole class), `com.vitalsshield.server.reenroll.ChallengeRateLimitIT.eleventhChallengeWithinAMinuteIs429WithRetryAfter` |
 | Offline-expiry recovery; mid-stream recovery; epoch rules; forged DEK refused | 8 | test | `com.vitalsshield.server.reenroll.ReEnrollIT` (whole class), `com.vitalsshield.server.reenroll.EpochRulesTest` (whole class), `com.vitalsshield.server.e2e.OfflineExpiryRecoveryE2E.streamSleepPastNotAfterResumeReEnrollsAutomatically` |
 | Collision rule; sequence-regression trap; post-drain trap; anomaly response; no anomaly in normal operation | 8 | test | `com.vitalsshield.server.reenroll.CollisionRuleTest` (whole class), `com.vitalsshield.server.anomaly.SequenceRegressionTrapTest` (whole class), `com.vitalsshield.server.anomaly.PostDrainTrapIT.oldCertificateWithinGraceIsFineAfterGracePlusSixIsAnAnomaly`, `com.vitalsshield.server.e2e.NormalOperationNoAnomalyE2E.normalDeviceBehaviorRaisesNoAnomaly` |
 | Plausibility and perfusion classification; activity context with the 5-minute resting rule | 8 | test | `com.vitalsshield.server.telemetry.TelemetryClassifierTest` (whole class), `com.vitalsshield.server.clinical.ActivityClassifierTest` (whole class), `com.vitalsshield.server.clinical.ClinicalEngineIT.restingNeedsFiveSustainedMinutes` |

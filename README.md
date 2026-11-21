@@ -97,7 +97,7 @@ the default profile (12 h leaves, no hierarchy rebuild) is the production settin
   rehearsal record.
 - [`docs/demo-fallback.md`](docs/demo-fallback.md): the same nine beats as a static walkthrough with real screenshots
   and outputs, for when the live stack is down (`scripts/stage/99-panic.sh`).
-- [`docs/QA_DRILL.md`](docs/QA_DRILL.md): about 35 judge questions with answers and evidence.
+- [`docs/QA_DRILL.md`](docs/QA_DRILL.md): 37 judge questions with answers and evidence.
 
 ## Tests
 

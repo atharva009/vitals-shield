@@ -34,6 +34,13 @@ public class TelemetryIngestController {
             return Mono.just(ResponseEntity.status(401).body(Map.of("error", "JWS_INVALID", "reason", "MALFORMED")));
         }
         return service.ingest(body.trim(), peer[0], cert)
-                .map(o -> ResponseEntity.status(o.status()).body(o.body()));
+                .map(o -> {
+                    ResponseEntity.BodyBuilder b = ResponseEntity.status(o.status());
+                    if (o.retryAfterSeconds() != null) {
+                        b.header(org.springframework.http.HttpHeaders.RETRY_AFTER,
+                                String.valueOf(o.retryAfterSeconds()));
+                    }
+                    return b.body(o.body());
+                });
     }
 }

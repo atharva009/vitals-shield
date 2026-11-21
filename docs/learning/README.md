@@ -20,7 +20,7 @@ from the spec.
 | 8 | [Protocol B renewal: first-use switchover, grace drain, demo TTL rollover](phase-08-renewal.md) | `9b038ea`, 8.1: `dc83baa` |
 | 9 | [Recovery: Protocol C re-enrollment, split-brain traps, backstop poller, clock discipline](phase-09-recovery.md) | `f0e511a` |
 | 10a | Hardening, no note: no-false-positive gate, demo profile, stage scripts, rehearsal; see [`DEMO_RUNBOOK.md`](../DEMO_RUNBOOK.md), [`demo-fallback.md`](../demo-fallback.md), [`RELEASE_CHECK.md`](../RELEASE_CHECK.md) | `d7272fd`, 10a.1: `ee599b0` |
-| 10b | Documents, no note: [spec v2](../vitalsshield_technical_architecture_specification_v2.md), [traceability](../TRACEABILITY.md), [Q&A drill](../QA_DRILL.md) | this phase |
+| 10b | Documents, no note: [spec v2](../vitalsshield_technical_architecture_specification_v2.md), [traceability](../TRACEABILITY.md), [Q&A drill](../QA_DRILL.md); 10b.1 closes the evidence gaps (ingest 503 STORE_UNAVAILABLE, D103; tests for alert 46, the challenge rate limit, renew and re-enroll 503s, DEVICE_UNASSIGNED; the drill run again) | `4e90d8a`, 10b.1: this phase |
 | | [Glossary](GLOSSARY.md) | |
 
 ## The finished system on one page
